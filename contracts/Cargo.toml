@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "credential",
+    "reward",
+    "access",
+    "governance",
+]
+resolver = "2"
