@@ -135,38 +135,40 @@ Here's the complete learner journey from first visit to verified credential:
 
 The entire platform lives in a single repository, managed as an npm/pnpm workspace. Each `apps/` directory is an independently deployable service; `packages/` contains shared libraries consumed across services.
 
+> Legend: ✅ implemented · 🚧 planned
+
 ```
 stellarlearn/
 │
 ├── apps/
-│   ├── app-learner/           # Next.js learner portal
-│   ├── app-instructor/        # Next.js instructor studio
-│   ├── app-admin/             # Next.js admin panel
-│   ├── api-gateway/           # GraphQL/REST gateway
-│   ├── service-auth/          # Stellar DID, Freighter wallet SSO
-│   ├── service-courses/       # Course catalogue, enrolment, progress
-│   ├── service-notifications/ # Email, push, and in-app notifications
-│   ├── ai-adaptive/           # Adaptive learning engine (Python / FastAPI)
-│   ├── ai-tutor/              # AI tutor & chatbot (Claude API)
-│   ├── ai-content/            # Content generation service
-│   ├── ai-analytics/          # Performance analytics & risk prediction
-│   ├── ai-triggers/           # AI → blockchain bridge
-│   └── storage/               # IPFS integration & CDN proxy
+│   ├── app-learner/           # ✅ Next.js learner portal
+│   ├── app-instructor/        # 🚧 Next.js instructor studio
+│   ├── app-admin/             # 🚧 Next.js admin panel
+│   ├── api-gateway/           # 🚧 GraphQL/REST gateway
+│   ├── service-auth/          # ✅ Stellar DID, Freighter wallet SSO
+│   ├── service-courses/       # ✅ Course catalogue, enrolment, progress
+│   ├── service-notifications/ # 🚧 Email, push, and in-app notifications
+│   ├── ai-adaptive/           # ✅ Adaptive learning engine (Python / FastAPI)
+│   ├── ai-tutor/              # ✅ AI tutor & chatbot (Claude API)
+│   ├── ai-content/            # 🚧 Content generation service
+│   ├── ai-analytics/          # 🚧 Performance analytics & risk prediction
+│   ├── ai-triggers/           # 🚧 AI → blockchain bridge
+│   └── storage/               # 🚧 IPFS integration & CDN proxy
 │
 ├── contracts/
-│   ├── credential/            # CredentialContract (Rust / Soroban)
-│   ├── reward/                # RewardContract
-│   ├── access/                # CourseAccessContract
-│   ├── governance/            # GovernanceContract
-│   └── Makefile               # build / deploy / test all contracts
+│   ├── credential/            # ✅ CredentialContract (Rust / Soroban)
+│   ├── reward/                # ✅ RewardContract
+│   ├── access/                # ✅ CourseAccessContract
+│   ├── governance/            # ✅ GovernanceContract
+│   └── Makefile               # ✅ build / deploy / test all contracts
 │
 ├── packages/
-│   ├── ui-kit/                # Shared React component library
-│   └── stellar-sdk-utils/     # Shared Stellar SDK helpers (JS + Python)
+│   ├── ui-kit/                # ✅ Shared React component library
+│   └── stellar-sdk-utils/     # ✅ Shared Stellar SDK helpers (JS + Python)
 │
-├── infra/                     # Kubernetes manifests, Terraform, Helm charts
-├── docs/                      # Architecture docs, ADRs, API specs
-├── .github/                   # GitHub Actions workflows, PR/issue templates
+├── infra/                     # 🚧 Kubernetes manifests, Terraform, Helm charts
+├── docs/                      # ✅ Architecture docs, ADRs, API specs
+├── .github/                   # ✅ GitHub Actions workflows, PR/issue templates
 ├── docker-compose.yml
 └── package.json               # Workspace root (npm/pnpm workspaces)
 ```
@@ -272,7 +274,7 @@ All trust, ownership, and incentive logic lives in `contracts/`:
 | Storage | IPFS (Pinata), Cloudflare R2, Node.js proxy | `apps/storage` |
 | Database | PostgreSQL (off-chain state), Redis (caching + sessions) | `apps/service-courses`, `apps/service-auth` |
 | DevOps | Docker, Kubernetes, Helm, Terraform, GitHub Actions | `infra/` |
-| Monitoring | Prometheus, Grafana, Stellar Expert | `apps/monitoring` |
+| Monitoring | Prometheus, Grafana, Stellar Expert | planned |
 
 
 ---
@@ -601,9 +603,6 @@ docker-compose up --build
 # Frontend learner app  →  http://localhost:3000
 npm run dev --workspace=apps/app-learner
 
-# API gateway           →  http://localhost:4000
-npm run dev --workspace=apps/api-gateway
-
 # AI tutor service      →  http://localhost:8001
 cd apps/ai-tutor && pip install -r requirements.txt && uvicorn main:app --reload --port 8001
 
@@ -722,14 +721,14 @@ local (docker-compose)
 
 GitHub Actions workflows live in `.github/workflows/`. All workflows are triggered on push and PR to `develop` and `main`.
 
-| Workflow | Trigger | Scope |
-|---|---|---|
-| `ci-node.yml` | Push / PR | `apps/app-*`, `apps/api-gateway`, `packages/ui-kit` |
-| `ci-python.yml` | Push / PR | `apps/ai-*`, `apps/storage` |
-| `ci-rust.yml` | Push / PR | `contracts/` |
-| `deploy-service.yml` | Release tag (`v*`) | All services → production |
-| `deploy-contracts.yml` | Release tag on `contracts/` | Contracts → testnet or mainnet |
-| `notify-slack.yml` | Post-deploy | All repos |
+| Workflow | Trigger | Scope | Status |
+|---|---|---|---|
+| `ci-node.yml` | Push / PR | `apps/app-*`, `apps/api-gateway`, `packages/ui-kit` | ✅ |
+| `ci-python.yml` | Push / PR | `apps/ai-*`, `apps/storage` | ✅ |
+| `ci-rust.yml` | Push / PR | `contracts/` | ✅ |
+| `deploy-service.yml` | Release tag (`v*`) | All services → production | 🚧 |
+| `deploy-contracts.yml` | Release tag on `contracts/` | Contracts → testnet or mainnet | 🚧 |
+| `notify-slack.yml` | Post-deploy | All repos | 🚧 |
 
 ### Contract Deploy Pipeline
 
@@ -744,25 +743,27 @@ When a release tag is pushed:
 
 ## API Reference
 
-Full API specs live in `docs/api/`:
+Full API specs will live in `docs/api/` — not yet written. Contributions welcome.
 
-- `docs/api/openapi.yaml` — REST API spec (all services)
-- `docs/api/schema.graphql` — GraphQL schema (api-gateway)
-- `docs/api/stellar-events.md` — on-chain event schemas
+- `docs/api/openapi.yaml` — REST API spec (all services) — 🚧 planned
+- `docs/api/schema.graphql` — GraphQL schema (api-gateway) — 🚧 planned
+- `docs/api/stellar-events.md` — on-chain event schemas — 🚧 planned
 
 ### AI Services Endpoints
 
-| Service | Endpoint | Method | Description |
-|---|---|---|---|
-| `ai-adaptive` | `/recommend` | POST | Get next recommended module for a learner |
-| `ai-adaptive` | `/mastery` | GET | Get concept mastery scores for a learner |
-| `ai-tutor` | `/ask` | POST | Send a message to the AI tutor |
-| `ai-tutor` | `/session` | DELETE | Clear session history |
-| `ai-content` | `/quiz` | POST | Generate a quiz from source material |
-| `ai-content` | `/summary` | POST | Generate a summary from source material |
-| `ai-content` | `/flashcards` | POST | Generate flashcards from source material |
-| `ai-analytics` | `/risk` | GET | Get at-risk learner predictions for a course |
-| `ai-triggers` | `/complete` | POST | Trigger on-chain milestone (internal use only) |
+The following endpoints are implemented for services that exist. Endpoints for 🚧 planned services are listed for reference.
+
+| Service | Endpoint | Method | Description | Status |
+|---|---|---|---|---|
+| `ai-adaptive` | `/recommend` | POST | Get next recommended module for a learner | ✅ |
+| `ai-adaptive` | `/mastery` | GET | Get concept mastery scores for a learner | ✅ |
+| `ai-tutor` | `/ask` | POST | Send a message to the AI tutor | ✅ |
+| `ai-tutor` | `/session` | DELETE | Clear session history | ✅ |
+| `ai-content` | `/quiz` | POST | Generate a quiz from source material | 🚧 |
+| `ai-content` | `/summary` | POST | Generate a summary from source material | 🚧 |
+| `ai-content` | `/flashcards` | POST | Generate flashcards from source material | 🚧 |
+| `ai-analytics` | `/risk` | GET | Get at-risk learner predictions for a course | 🚧 |
+| `ai-triggers` | `/complete` | POST | Trigger on-chain milestone (internal use only) | 🚧 |
 
 ---
 
@@ -805,8 +806,7 @@ stellar contract invoke \
 npm run test
 
 # Per-service:
-npm run test --workspace=apps/app-learner      # Vitest unit tests
-npm run test --workspace=apps/api-gateway      # Jest integration tests
+npm run test --workspace=apps/service-auth     # Jest integration tests
 cd apps/ai-tutor    && pytest                  # Pytest unit + integration
 cd apps/ai-adaptive && pytest --cov            # With coverage report
 cd contracts        && cargo test              # Rust unit tests (all contracts)
@@ -827,18 +827,28 @@ cd contracts        && make test-e2e           # Soroban testnet e2e tests
 ## Roadmap
 
 - [x] Architecture design and monorepo structure
-- [x] Soroban smart contract specifications
-- [x] GitHub Actions CI/CD workflows
-- [ ] `ui-kit` v1 — shared design system
-- [ ] MVP frontend apps (`app-learner`, `app-instructor`)
-- [ ] `api-gateway` and `service-courses` v1
-- [ ] `ai-adaptive` engine v1 (BKT model)
-- [ ] `ai-tutor` — Claude API integration
-- [ ] Credential NFT issuance on testnet (`contracts` v1)
+- [x] Soroban smart contracts — all 4 contracts implemented and tested
+- [x] GitHub Actions CI/CD workflows (Node, Python, Rust)
+- [x] `service-auth` — Stellar wallet SSO, JWT issuance
+- [x] `service-courses` — course catalogue, enrolment, progress
+- [x] `ai-adaptive` engine v1 (BKT model)
+- [x] `ai-tutor` — Claude API integration
+- [x] `packages/ui-kit` — shared component library scaffolded
+- [x] `packages/stellar-sdk-utils` — shared Stellar SDK helpers
+- [x] Contributor docs — `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, issue templates, ADRs
+- [ ] `app-learner` MVP — complete learner portal UI
+- [ ] `app-instructor` — instructor studio
+- [ ] `app-admin` — admin panel
+- [ ] `api-gateway` — GraphQL/REST gateway
+- [ ] `ai-content` — content generation service
+- [ ] `ai-analytics` — risk prediction model
+- [ ] `ai-triggers` — AI → blockchain bridge
+- [ ] `storage` — IPFS integration & CDN proxy
+- [ ] Credential NFT issuance on testnet (end-to-end)
 - [ ] `LEARN` token deployment and reward system
-- [ ] IPFS-based student records (`storage` service)
-- [ ] Governance contract and DAO tooling
-- [ ] `ai-analytics` risk prediction model
+- [ ] `infra/` — Helm charts, Terraform, Kubernetes manifests
+- [ ] API specs (`docs/api/`)
+- [ ] Governance contract DAO tooling
 - [ ] Mobile app (React Native — `apps/app-mobile`)
 - [ ] Mainnet launch
 - [ ] Multi-language support
