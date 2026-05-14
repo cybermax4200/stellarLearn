@@ -1,0 +1,30 @@
+name: CI — Node.js
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'apps/app-learner/**'
+      - 'apps/api-gateway/**'
+      - 'apps/service-auth/**'
+      - 'apps/service-courses/**'
+      - 'packages/ui-kit/**'
+      - 'packages/stellar-sdk-utils/**'
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/stellar-sdk-utils
+      - run: npm run build --workspace=apps/service-auth
+      - run: npm run build --workspace=apps/service-courses
+      - run: npm run build --workspace=apps/app-learner
+      - run: npm run test --workspace=apps/service-auth

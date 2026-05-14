@@ -1,0 +1,92 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: stellarlearn
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U user -d stellarlearn']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  service-auth:
+    build:
+      context: ./apps/service-auth
+      dockerfile: Dockerfile
+    ports:
+      - '3001:3001'
+    environment:
+      PORT: 3001
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  service-courses:
+    build:
+      context: ./apps/service-courses
+      dockerfile: Dockerfile
+    ports:
+      - '3002:3002'
+    environment:
+      PORT: 3002
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-in-production}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://user:password@postgres:5432/stellarlearn}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ai-adaptive:
+    build:
+      context: ./apps/ai-adaptive
+      dockerfile: Dockerfile
+    ports:
+      - '8002:8002'
+    environment:
+      PORT: 8002
+
+  ai-tutor:
+    build:
+      context: ./apps/ai-tutor
+      dockerfile: Dockerfile
+    ports:
+      - '8001:8001'
+    environment:
+      PORT: 8001
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      CLAUDE_MODEL: ${CLAUDE_MODEL:-claude-sonnet-4-20250514}
+
+  app-learner:
+    build:
+      context: ./apps/app-learner
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      NEXT_PUBLIC_AUTH_URL: http://localhost:3001
+      NEXT_PUBLIC_COURSES_URL: http://localhost:3002
+      NEXT_PUBLIC_STELLAR_PASSPHRASE: 'Test SDF Network ; September 2015'
+    depends_on:
+      - service-auth
+      - service-courses
+
+volumes:
+  postgres_data:
