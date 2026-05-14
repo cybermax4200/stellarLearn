@@ -9,7 +9,6 @@
 [![Stellar Network](https://img.shields.io/badge/Stellar-Soroban-blue?style=flat-square&logo=stellar)](https://stellar.org)
 [![Powered by Claude](https://img.shields.io/badge/AI-Claude%20API-blueviolet?style=flat-square)](https://anthropic.com)
 
-**Repository:** [`github.com/stellarlearn/stellarlearn`](https://github.com/stellarlearn/stellarlearn)
 
 ---
 
@@ -908,5 +907,4 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE) for det
 
 <div align="center">
   Built on <a href="https://stellar.org">Stellar</a> · Powered by AI · Owned by learners<br/><br/>
-  <a href="https://github.com/stellarlearn/stellarlearn">github.com/stellarlearn/stellarlearn</a>
 </div>
