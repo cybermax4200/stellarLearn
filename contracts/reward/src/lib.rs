@@ -28,9 +28,9 @@ pub enum Error {
     Unauthorised = 3,
 }
 
-const DEFAULT_DAILY_CAP: i128 = 100_000_0000000; // 100 LEARN (7 decimals)
+const DEFAULT_DAILY_CAP: i128 = 100_0000000; // 100 LEARN (7 decimals)
 
-fn milestone_default_amount(milestone: &MilestoneType) -> i128 {
+pub fn milestone_default_amount(milestone: &MilestoneType) -> i128 {
     match milestone {
         MilestoneType::ModuleComplete => 1_0000000,   // 1 LEARN
         MilestoneType::CourseComplete => 10_0000000,  // 10 LEARN
@@ -78,19 +78,19 @@ impl RewardContract {
             .get(&DataKey::DailyCap)
             .unwrap_or(DEFAULT_DAILY_CAP);
 
-        let day = env.ledger().timestamp() / 86400;
-        let daily_key = DataKey::DailyDisbursed(learner.clone(), day);
-        let today_total: i128 = env.storage().temporary().get(&daily_key).unwrap_or(0);
-
-        if today_total + amount > daily_cap {
-            return Err(Error::DailyCapExceeded);
-        }
-
         let reward_amount = if amount > 0 {
             amount
         } else {
             milestone_default_amount(&milestone)
         };
+
+        let day = env.ledger().timestamp() / 86400;
+        let daily_key = DataKey::DailyDisbursed(learner.clone(), day);
+        let today_total: i128 = env.storage().temporary().get(&daily_key).unwrap_or(0);
+
+        if today_total + reward_amount > daily_cap {
+            return Err(Error::DailyCapExceeded);
+        }
 
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&admin, &learner, &reward_amount);
@@ -111,5 +111,92 @@ impl RewardContract {
             .persistent()
             .get(&DataKey::TotalDisbursed(learner))
             .unwrap_or(0)
+    }
+
+    /// Get daily cap.
+    pub fn get_daily_cap(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DailyCap)
+            .unwrap_or(DEFAULT_DAILY_CAP)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    #[test]
+    fn test_initialise_and_disburse_reward() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(RewardContract, ());
+        let client = RewardContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let learner = Address::generate(&env);
+
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_id = token_contract.address();
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        // Mint tokens to admin so contract can transfer from admin
+        token_admin_client.mint(&admin, &1000_0000000);
+
+        client.initialise(&admin, &token_id);
+
+        assert_eq!(client.get_daily_cap(), DEFAULT_DAILY_CAP);
+
+        // Disburse module complete default reward
+        client.disburse_reward(&learner, &MilestoneType::ModuleComplete, &0);
+        assert_eq!(client.total_disbursed(&learner), 1_0000000);
+
+        // Disburse course complete default reward (10 LEARN)
+        client.disburse_reward(&learner, &MilestoneType::CourseComplete, &0);
+        assert_eq!(client.total_disbursed(&learner), 11_0000000);
+
+        // Custom reward amount
+        client.disburse_reward(&learner, &MilestoneType::StreakBonus, &20_0000000);
+        assert_eq!(client.total_disbursed(&learner), 31_0000000);
+    }
+
+    #[test]
+    fn test_daily_cap_exceeded() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(RewardContract, ());
+        let client = RewardContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let learner = Address::generate(&env);
+
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_id = token_contract.address();
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+        token_admin_client.mint(&admin, &1000_0000000);
+        client.initialise(&admin, &token_id);
+
+        // Try to disburse more than daily cap (100 LEARN)
+        let result = client.try_disburse_reward(&learner, &MilestoneType::CourseComplete, &101_0000000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_uninitialised_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(RewardContract, ());
+        let client = RewardContractClient::new(&env, &contract_id);
+        let learner = Address::generate(&env);
+
+        let result = client.try_disburse_reward(&learner, &MilestoneType::ModuleComplete, &0);
+        assert!(result.is_err());
     }
 }

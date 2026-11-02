@@ -134,3 +134,89 @@ impl GovernanceContract {
             .ok_or(Error::NotFound)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
+
+    #[test]
+    fn test_submit_and_get_proposal() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &contract_id);
+
+        let proposer = Address::generate(&env);
+        let desc = String::from_str(&env, "Add Soroban Rust 201 Course");
+
+        let id = client.submit_proposal(&proposer, &desc);
+        assert_eq!(id, 1);
+
+        let proposal = client.get_proposal(&id);
+        assert_eq!(proposal.id, 1);
+        assert_eq!(proposal.proposer, proposer);
+        assert_eq!(proposal.description, desc);
+        assert_eq!(proposal.votes_for, 0);
+        assert_eq!(proposal.votes_against, 0);
+        assert_eq!(proposal.executed, false);
+    }
+
+    #[test]
+    fn test_voting_and_execution() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &contract_id);
+
+        let proposer = Address::generate(&env);
+        let voter1 = Address::generate(&env);
+        let voter2 = Address::generate(&env);
+
+        let id = client.submit_proposal(&proposer, &String::from_str(&env, "Proposal 1"));
+
+        // Voter 1 votes For with 1500 LEARN (meets MIN_QUORUM of 1000)
+        client.cast_vote(&voter1, &id, &VoteType::For, &1500_0000000);
+
+        // Voter 2 votes Against with 200 LEARN
+        client.cast_vote(&voter2, &id, &VoteType::Against, &200_0000000);
+
+        let proposal = client.get_proposal(&id);
+        assert_eq!(proposal.votes_for, 1500_0000000);
+        assert_eq!(proposal.votes_against, 200_0000000);
+
+        // Double voting fails
+        let double_vote = client.try_cast_vote(&voter1, &id, &VoteType::For, &100_0000000);
+        assert!(double_vote.is_err());
+
+        // Execute proposal succeeds
+        client.execute_proposal(&id);
+        let executed_proposal = client.get_proposal(&id);
+        assert!(executed_proposal.executed);
+
+        // Re-executing fails
+        let re_exec = client.try_execute_proposal(&id);
+        assert!(re_exec.is_err());
+    }
+
+    #[test]
+    fn test_quorum_not_met_execution_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(GovernanceContract, ());
+        let client = GovernanceContractClient::new(&env, &contract_id);
+
+        let proposer = Address::generate(&env);
+        let voter = Address::generate(&env);
+
+        let id = client.submit_proposal(&proposer, &String::from_str(&env, "Low vote proposal"));
+        // Only 500 LEARN voted (under 1000 quorum)
+        client.cast_vote(&voter, &id, &VoteType::For, &500_0000000);
+
+        let result = client.try_execute_proposal(&id);
+        assert!(result.is_err());
+    }
+}

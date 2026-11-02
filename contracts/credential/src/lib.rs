@@ -12,6 +12,7 @@ pub struct Credential {
 
 #[contracttype]
 pub enum DataKey {
+    Admin,
     Credential(Address, String), // (learner, course_id)
     LearnerCredentials(Address),
 }
@@ -22,6 +23,7 @@ pub enum Error {
     AlreadyIssued = 1,
     NotFound = 2,
     Unauthorised = 3,
+    NotInitialised = 4,
 }
 
 #[contract]
@@ -29,14 +31,28 @@ pub struct CredentialContract;
 
 #[contractimpl]
 impl CredentialContract {
+    /// Initialise the credential contract with an admin (issuer) address.
+    pub fn initialise(env: Env, admin: Address) -> Result<(), Error> {
+        if env.storage().instance().has(&DataKey::Admin) {
+            return Err(Error::Unauthorised);
+        }
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        Ok(())
+    }
+
     /// Issue a credential NFT to a learner's Stellar wallet.
-    /// Only callable by the platform trigger keypair (admin).
+    /// Only callable by the platform trigger keypair (admin) if initialised.
     pub fn issue_credential(
         env: Env,
         learner: Address,
         course_id: String,
         metadata_hash: String,
     ) -> Result<(), Error> {
+        if let Some(admin) = env.storage().instance().get::<DataKey, Address>(&DataKey::Admin) {
+            admin.require_auth();
+        }
+
         let key = DataKey::Credential(learner.clone(), course_id.clone());
 
         if env.storage().persistent().has(&key) {
@@ -148,5 +164,29 @@ mod test {
 
         let creds = client.get_credentials(&learner);
         assert_eq!(creds.len(), 2);
+    }
+
+    #[test]
+    fn test_admin_initialisation_and_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register(CredentialContract, ());
+        let client = CredentialContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialise(&admin);
+
+        // Cannot re-initialise
+        let re_init = client.try_initialise(&admin);
+        assert!(re_init.is_err());
+
+        let learner = Address::generate(&env);
+        let course_id = String::from_str(&env, "stellar-security");
+        let cid = String::from_str(&env, "QmSecureHash");
+
+        client.issue_credential(&learner, &course_id, &cid);
+        let cred = client.get_credential(&learner, &course_id);
+        assert_eq!(cred.course_id, course_id);
     }
 }
