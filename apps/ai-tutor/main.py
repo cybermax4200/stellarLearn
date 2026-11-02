@@ -25,8 +25,14 @@ def health():
 
 @app.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
-    """Send a question to the AI tutor. Returns a streamed response."""
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    """Send a question to the AI tutor. Supports online Claude API and offline test mode."""
+    mock_mode = (
+        os.getenv("USE_MOCK_AI", "false").lower() in ("true", "1")
+        or os.getenv("ANTHROPIC_API_KEY", "") in ("mock", "test")
+        or not os.getenv("ANTHROPIC_API_KEY")
+    )
+
+    if not os.getenv("ANTHROPIC_API_KEY") and not mock_mode:
         raise HTTPException(status_code=503, detail="ANTHROPIC_API_KEY not configured")
 
     tutor = AITutor(course_context=req.course_context, session_id=req.session_id)
