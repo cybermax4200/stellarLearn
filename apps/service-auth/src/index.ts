@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import jwt from 'jsonwebtoken'
-import { verifyWalletSignature, generateAuthChallenge } from '@stellarlearn/stellar-sdk-utils'
+import { verifyWalletSignature, generateAuthChallenge, isValidStellarPublicKey } from '@stellarlearn/stellar-sdk-utils'
 
 const app = express()
 app.use(cors())
@@ -13,13 +13,17 @@ const PORT = process.env.PORT ?? 3001
 // In-memory challenge store (use Redis in production)
 const challenges = new Map<string, { challenge: string; expiresAt: number }>()
 
+export function clearChallenges(): void {
+  challenges.clear()
+}
+
 /**
  * GET /auth/challenge?publicKey=G...
  * Returns a challenge string the learner must sign with their Stellar wallet.
  */
 app.get('/auth/challenge', (req, res) => {
   const publicKey = req.query.publicKey as string
-  if (!publicKey || !publicKey.startsWith('G') || publicKey.length !== 56) {
+  if (!publicKey || !isValidStellarPublicKey(publicKey)) {
     return res.status(400).json({ error: 'Invalid Stellar public key' })
   }
   const challenge = generateAuthChallenge(publicKey)
@@ -33,7 +37,7 @@ app.get('/auth/challenge', (req, res) => {
  * Verifies the wallet signature and returns a JWT.
  */
 app.post('/auth/verify', (req, res) => {
-  const { publicKey, signature } = req.body as { publicKey: string; signature: string }
+  const { publicKey, signature } = req.body as { publicKey?: string; signature?: string }
 
   if (!publicKey || !signature) {
     return res.status(400).json({ error: 'publicKey and signature are required' })
@@ -79,6 +83,8 @@ app.get('/auth/me', (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'service-auth' }))
 
-app.listen(PORT, () => console.log(`service-auth listening on :${PORT}`))
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => console.log(`service-auth listening on :${PORT}`))
+}
 
 export { app }
