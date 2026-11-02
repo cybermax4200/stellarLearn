@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import jwt from 'jsonwebtoken'
-import { COURSES, enrolments, type Enrolment } from './data'
+import { COURSES, enrolments, type Course, type Enrolment } from './data'
 
 const app = express()
 app.use(cors())
@@ -9,6 +9,10 @@ app.use(express.json())
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
 const PORT = process.env.PORT ?? 3002
+
+export function clearEnrolments(): void {
+  enrolments.clear()
+}
 
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
   const auth = req.headers.authorization
@@ -25,6 +29,28 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
 // GET /courses — list all courses
 app.get('/courses', (_req, res) => {
   res.json(COURSES.map(({ modules, ...c }) => ({ ...c, moduleCount: modules.length })))
+})
+
+// GET /enrolments/mine — list all enrolled courses with course metadata for the authenticated learner
+app.get('/enrolments/mine', requireAuth, (_req, res) => {
+  const publicKey = res.locals.publicKey as string
+  const userEnrolments: Array<Enrolment & { course: Course; completedModulesCount: number; isCompleted: boolean }> = []
+
+  for (const course of COURSES) {
+    const key = `${publicKey}:${course.id}`
+    const enrolment = enrolments.get(key)
+    if (enrolment) {
+      const completedCount = course.modules.filter((m) => enrolment.progress[m.id]?.completed).length
+      userEnrolments.push({
+        ...enrolment,
+        course,
+        completedModulesCount: completedCount,
+        isCompleted: completedCount === course.modules.length,
+      })
+    }
+  }
+
+  return res.json({ enrolments: userEnrolments, count: userEnrolments.length })
 })
 
 // GET /courses/:id — get a single course with modules
@@ -67,6 +93,12 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
   const { id: courseId, moduleId } = req.params
   const { score } = req.body as { score?: number }
 
+  const course = COURSES.find((c) => c.id === courseId)
+  if (!course) return res.status(404).json({ error: 'Course not found' })
+
+  const moduleExists = course.modules.some((m) => m.id === moduleId)
+  if (!moduleExists) return res.status(404).json({ error: 'Module not found in this course' })
+
   const enrolment = enrolments.get(`${publicKey}:${courseId}`)
   if (!enrolment) return res.status(404).json({ error: 'Not enrolled' })
 
@@ -77,8 +109,7 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
     completedAt: new Date().toISOString(),
   }
 
-  // Check if all modules are complete → emit completion event
-  const course = COURSES.find((c) => c.id === courseId)!
+  // Check if all modules are complete
   const allComplete = course.modules.every((m) => enrolment.progress[m.id]?.completed)
 
   return res.json({ progress: enrolment.progress, courseComplete: allComplete })
@@ -86,6 +117,8 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'service-courses' }))
 
-app.listen(PORT, () => console.log(`service-courses listening on :${PORT}`))
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => console.log(`service-courses listening on :${PORT}`))
+}
 
 export { app }
