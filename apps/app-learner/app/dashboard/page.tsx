@@ -1,10 +1,57 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useWallet } from '@/contexts/WalletContext'
 import Link from 'next/link'
+import { Button } from '@stellarlearn/ui-kit'
+import { Badge } from '@stellarlearn/ui-kit'
+import { Card } from '@stellarlearn/ui-kit'
+
+interface EnrolmentItem {
+  learnerPublicKey: string
+  courseId: string
+  enrolledAt: string
+  completedModulesCount: number
+  isCompleted: boolean
+  progress: Record<string, { completed: boolean; score?: number }>
+  course: {
+    id: string
+    title: string
+    description: string
+    price: number
+    level: 'beginner' | 'intermediate' | 'advanced'
+    modules: Array<{ id: string; title: string }>
+  }
+}
+
+const COURSES_URL = process.env.NEXT_PUBLIC_COURSES_URL ?? 'http://localhost:3002'
 
 export default function DashboardPage() {
   const { publicKey, disconnect } = useWallet()
+  const [enrolments, setEnrolments] = useState<EnrolmentItem[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!publicKey) return
+    setLoading(true)
+
+    // Attempt to load live enrolments
+    fetch(`${COURSES_URL}/enrolments/mine`, {
+      headers: {
+        Authorization: `Bearer dev-token`,
+      },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.enrolments) {
+          setEnrolments(data.enrolments)
+        }
+      })
+      .catch(() => {
+        // Service offline or non-mocked; keep default state
+      })
+      .finally(() => setLoading(false))
+  }, [publicKey])
 
   if (!publicKey) {
     return (
@@ -18,49 +65,84 @@ export default function DashboardPage() {
   }
 
   const short = `${publicKey.slice(0, 8)}…${publicKey.slice(-8)}`
+  const completedCount = enrolments.filter((e) => e.isCompleted).length
+  const estimatedLearn = completedCount * 10 + enrolments.reduce((acc, e) => acc + (e.completedModulesCount * 1), 0)
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+          <h1 className="text-3xl font-bold text-gray-900">Learner Dashboard</h1>
           <p className="text-gray-500 font-mono text-sm mt-1">{short}</p>
         </div>
-        <button
-          onClick={disconnect}
-          className="text-sm text-gray-500 hover:text-red-600 transition-colors border border-gray-200 px-3 py-1.5 rounded-lg"
-        >
+        <Button variant="secondary" size="sm" onClick={disconnect}>
           Disconnect
-        </button>
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
         {[
-          { label: 'Courses Enrolled', value: '—', icon: '📚' },
-          { label: 'LEARN Tokens', value: '—', icon: '🪙' },
-          { label: 'Credentials Earned', value: '—', icon: '🏆' },
+          { label: 'Courses Enrolled', value: enrolments.length, icon: '📚' },
+          { label: 'Estimated LEARN Earned', value: `${estimatedLearn} LEARN`, icon: '🪙' },
+          { label: 'Credentials Earned', value: completedCount, icon: '🏆' },
         ].map((stat) => (
-          <div key={stat.label} className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+          <Card key={stat.label} padding="lg">
             <div className="text-2xl mb-2">{stat.icon}</div>
             <div className="text-3xl font-bold text-gray-900">{stat.value}</div>
             <div className="text-sm text-gray-500 mt-1">{stat.label}</div>
-          </div>
+          </Card>
         ))}
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-        <h2 className="font-semibold text-gray-900 mb-4">My Courses</h2>
-        <div className="text-center py-10 text-gray-400">
-          <div className="text-4xl mb-3">📖</div>
-          <p className="text-sm">You haven&apos;t enrolled in any courses yet.</p>
-          <Link
-            href="/courses"
-            className="mt-4 inline-block text-indigo-600 hover:underline text-sm"
-          >
-            Browse the catalogue →
+      <Card padding="lg">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="font-semibold text-gray-900 text-lg">My Enrolled Courses</h2>
+          <Link href="/courses" className="text-sm text-indigo-600 hover:underline">
+            Browse Catalogue →
           </Link>
         </div>
-      </div>
+
+        {loading ? (
+          <div className="text-center py-10 text-gray-400">Loading your enrolments...</div>
+        ) : enrolments.length === 0 ? (
+          <div className="text-center py-12 text-gray-400">
+            <div className="text-4xl mb-3">📖</div>
+            <p className="text-sm">You haven&apos;t enrolled in any courses yet.</p>
+            <Link
+              href="/courses"
+              className="mt-4 inline-block text-indigo-600 hover:underline text-sm font-medium"
+            >
+              Browse the catalogue →
+            </Link>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {enrolments.map((item) => (
+              <div
+                key={item.courseId}
+                className="border border-gray-100 rounded-xl p-5 bg-gray-50 hover:bg-white hover:border-indigo-100 transition-all shadow-sm"
+              >
+                <div className="flex items-start justify-between mb-2">
+                  <Badge variant={item.isCompleted ? 'success' : 'stellar'}>
+                    {item.isCompleted ? 'Completed' : 'In Progress'}
+                  </Badge>
+                  <span className="text-xs text-gray-400">
+                    {item.completedModulesCount} / {item.course.modules.length} modules
+                  </span>
+                </div>
+                <h3 className="font-bold text-gray-900 text-base mb-1">{item.course.title}</h3>
+                <p className="text-xs text-gray-600 line-clamp-2 mb-4">{item.course.description}</p>
+                <Link
+                  href={`/courses/${item.courseId}`}
+                  className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+                >
+                  Continue Learning →
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }

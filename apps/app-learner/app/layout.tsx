@@ -1,10 +1,15 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import localFont from 'next/font/local'
 import './globals.css'
 import { WalletProvider } from '@/contexts/WalletContext'
 import { WalletButton } from '@/components/WalletButton'
 
-const inter = Inter({ subsets: ['latin'] })
+const geistSans = localFont({
+  src: './fonts/GeistVF.woff',
+  variable: '--font-geist-sans',
+  weight: '100 900',
+  fallback: ['system-ui', 'sans-serif'],
+})
 
 export const metadata: Metadata = {
   title: 'StellarLearn — AI-Powered Learning on Stellar',
@@ -14,7 +19,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={`${inter.className} bg-gray-50 min-h-screen`}>
+      <body className={`${geistSans.className} bg-gray-50 min-h-screen font-sans`}>
         <WalletProvider>
           <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
