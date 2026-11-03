@@ -94,3 +94,17 @@ def test_api_mastery_update_and_query():
     assert get_data["learner_id"] == "learner_123"
     assert "stellar-basics" in get_data["mastery"]
     assert get_data["mastery"]["stellar-basics"]["attempts"] == 1
+
+
+def test_api_recommend_course_specific():
+    res = client.post(
+        "/recommend",
+        json={
+            "learner_id": "course_learner",
+            "course_id": "soroban-smart-contracts",
+            "completed_modules": ["soroban-intro"],
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["module_id"] == "rust-basics"

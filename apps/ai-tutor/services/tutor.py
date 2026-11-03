@@ -2,6 +2,7 @@ import os
 import uuid
 from typing import Optional
 import anthropic
+from services.rag import retrieve_relevant_knowledge
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -10,14 +11,15 @@ SYSTEM_PROMPT_TEMPLATE = """You are an expert AI tutor for StellarLearn, an educ
 
 You are currently tutoring a learner on the course: **{course_context}**.
 
+Relevant Curriculum Knowledge:
+{knowledge_context}
+
 Your role:
 - Answer questions clearly and accurately, scoped to the course material
 - Use concrete examples and analogies
 - Ask Socratic follow-up questions to deepen understanding
 - If a question is outside the course scope, gently redirect to relevant material
 - Keep responses concise but complete
-
-Course context: {course_context}
 """
 
 # In-memory session store (use Redis in production)
@@ -46,19 +48,29 @@ class AITutor:
         history = sessions[self.session_id]
         history.append({"role": "user", "content": question})
 
+        knowledge = retrieve_relevant_knowledge(question, self.course_context)
+        knowledge_snippet = (
+            f"Topic: {knowledge['title']}\n{knowledge['snippet']}"
+            if knowledge
+            else "General Stellar Blockchain Concepts"
+        )
+
         if self.mock_mode or not self.client:
-            # Deterministic, grounded mock answer for offline/dev/test environments
+            # Grounded educational mock answer enriched with RAG knowledge
             answer = (
                 f"As your StellarLearn tutor for '{self.course_context}': "
-                f"Regarding '{question}', Stellar uses the Stellar Consensus Protocol (SCP) and "
-                f"Soroban smart contracts for high-throughput, low-latency execution. "
+                f"Regarding '{question}', {knowledge_snippet} "
                 f"How would you apply this to your current learning module?"
             )
         else:
+            prompt = SYSTEM_PROMPT_TEMPLATE.format(
+                course_context=self.course_context,
+                knowledge_context=knowledge_snippet,
+            )
             response = self.client.messages.create(
                 model=CLAUDE_MODEL,
                 max_tokens=1024,
-                system=SYSTEM_PROMPT_TEMPLATE.format(course_context=self.course_context),
+                system=prompt,
                 messages=history,
             )
             answer = response.content[0].text

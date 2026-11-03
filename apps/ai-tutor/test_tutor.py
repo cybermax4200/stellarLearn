@@ -80,3 +80,11 @@ def test_clear_session():
 
     history_res = client.get(f"/session/{session_id}")
     assert history_res.json()["count"] == 0
+
+
+def test_rag_knowledge_retrieval():
+    from services.rag import retrieve_relevant_knowledge
+    doc = retrieve_relevant_knowledge("How do Soroban smart contracts handle WASM?")
+    assert doc is not None
+    assert "Soroban" in doc["title"]
+    assert "WASM" in doc["snippet"]

@@ -66,6 +66,25 @@ CONCEPT_GRAPH: dict[str, list[str]] = {
     "defi-advanced": ["defi-basics"],
 }
 
+COURSE_CONCEPT_GRAPHS: dict[str, dict[str, list[str]]] = {
+    "stellar-fundamentals": {
+        "intro-stellar": [],
+        "accounts-assets": ["intro-stellar"],
+        "quiz-basics": ["accounts-assets"],
+    },
+    "soroban-smart-contracts": {
+        "soroban-intro": [],
+        "rust-basics": ["soroban-intro"],
+        "first-contract": ["rust-basics"],
+        "quiz-soroban": ["first-contract"],
+    },
+    "defi-on-stellar": {
+        "defi-intro": [],
+        "amm-pools": ["defi-intro"],
+        "quiz-defi": ["amm-pools"],
+    },
+}
+
 MASTERY_THRESHOLD = 0.85
 REMEDIATION_THRESHOLD = 0.60
 
@@ -73,6 +92,7 @@ REMEDIATION_THRESHOLD = 0.60
 def recommend_next(
     mastery_scores: dict[str, float],
     completed_modules: list[str],
+    course_id: Optional[str] = None,
 ) -> Optional[dict]:
     """
     Return the next recommended module based on mastery scores and concept graph.
@@ -80,14 +100,24 @@ def recommend_next(
     - Score < 0.60: remediation
     - Otherwise: next in sequence
     """
-    for concept, prereqs in CONCEPT_GRAPH.items():
+    graph = (
+        COURSE_CONCEPT_GRAPHS.get(course_id, CONCEPT_GRAPH)
+        if course_id
+        else CONCEPT_GRAPH
+    )
+
+    for concept, prereqs in graph.items():
         if concept in completed_modules:
             continue
-        # Check all prerequisites are mastered
-        prereqs_met = all(mastery_scores.get(p, 0) >= MASTERY_THRESHOLD for p in prereqs)
+        # Check all prerequisites are mastered or completed
+        prereqs_met = all(
+            (p in completed_modules or mastery_scores.get(p, 0) >= MASTERY_THRESHOLD)
+            for p in prereqs
+        )
         if not prereqs_met:
             # Find the weakest prerequisite for remediation
-            weakest = min(prereqs, key=lambda p: mastery_scores.get(p, 0), default=None)
+            unmet_prereqs = [p for p in prereqs if p not in completed_modules and mastery_scores.get(p, 0) < MASTERY_THRESHOLD]
+            weakest = min(unmet_prereqs, key=lambda p: mastery_scores.get(p, 0), default=None) if unmet_prereqs else (prereqs[0] if prereqs else None)
             if weakest:
                 score = mastery_scores.get(weakest, 0)
                 return {

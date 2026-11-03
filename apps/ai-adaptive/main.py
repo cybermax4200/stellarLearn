@@ -13,10 +13,13 @@ app = FastAPI(title="StellarLearn AI Adaptive Engine", version="0.1.0")
 learner_states: dict[str, dict[str, ConceptState]] = {}
 
 
+from typing import Optional
+
 class RecommendRequest(BaseModel):
     learner_id: str
     completed_modules: list[str] = []
     performance_scores: dict[str, float] = {}
+    course_id: Optional[str] = None
 
 
 class UpdateMasteryRequest(BaseModel):
@@ -33,7 +36,11 @@ def health():
 @app.post("/recommend")
 def recommend(req: RecommendRequest):
     """Return the next recommended module for a learner."""
-    result = recommend_next(req.performance_scores, req.completed_modules)
+    result = recommend_next(
+        req.performance_scores,
+        req.completed_modules,
+        course_id=req.course_id,
+    )
     if result is None:
         return {"message": "All concepts complete — ready for credential!", "module_id": None}
     return result
