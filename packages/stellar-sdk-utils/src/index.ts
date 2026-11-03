@@ -1,4 +1,17 @@
-import { Networks, Transaction, Keypair, StrKey } from '@stellar/stellar-sdk'
+import {
+  Networks,
+  Transaction,
+  Keypair,
+  StrKey,
+  xdr,
+  Address,
+  Contract,
+  nativeToScVal,
+  scValToNative,
+  Operation,
+  TransactionBuilder,
+  Account,
+} from '@stellar/stellar-sdk'
 
 export type StellarNetwork = 'testnet' | 'mainnet' | 'local'
 
@@ -118,4 +131,127 @@ export function generateAuthChallenge(publicKey: string): string {
   return `stellarlearn:auth:${publicKey}:${ts}:${nonce}`
 }
 
-export { Networks, Transaction, Keypair, StrKey }
+// ==========================================
+// Soroban Smart Contract Invocation Helpers
+// ==========================================
+
+export interface ContractInvocationParams {
+  contractId: string
+  method: string
+  args: xdr.ScVal[]
+}
+
+/**
+ * Build an invokeContractFunction operation for a Soroban contract.
+ */
+export function buildInvokeContractOp(params: ContractInvocationParams): xdr.Operation {
+  return Operation.invokeContractFunction({
+    contract: params.contractId,
+    function: params.method,
+    args: params.args,
+  })
+}
+
+/**
+ * Build operation to invoke CredentialContract.issue_credential(learner, course_id, metadata_hash)
+ */
+export function buildIssueCredentialOp(
+  contractId: string,
+  learnerPublicKey: string,
+  courseId: string,
+  metadataHash: string
+): xdr.Operation {
+  return buildInvokeContractOp({
+    contractId,
+    method: 'issue_credential',
+    args: [
+      new Address(learnerPublicKey).toScVal(),
+      nativeToScVal(courseId, { type: 'string' }),
+      nativeToScVal(metadataHash, { type: 'string' }),
+    ],
+  })
+}
+
+export type MilestoneType = 'ModuleComplete' | 'CourseComplete' | 'AssessmentPassed' | 'StreakBonus'
+
+/**
+ * Build operation to invoke RewardContract.disburse_reward(learner, milestone)
+ */
+export function buildDisburseRewardOp(
+  contractId: string,
+  learnerPublicKey: string,
+  milestone: MilestoneType
+): xdr.Operation {
+  const milestoneScVal = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(milestone)])
+  return buildInvokeContractOp({
+    contractId,
+    method: 'disburse_reward',
+    args: [
+      new Address(learnerPublicKey).toScVal(),
+      milestoneScVal,
+    ],
+  })
+}
+
+/**
+ * Build operation to invoke CourseAccessContract.unlock_module(learner, course_id, module_id, prior_score)
+ */
+export function buildUnlockModuleOp(
+  contractId: string,
+  learnerPublicKey: string,
+  courseId: string,
+  moduleId: number,
+  priorScore: number
+): xdr.Operation {
+  return buildInvokeContractOp({
+    contractId,
+    method: 'unlock_module',
+    args: [
+      new Address(learnerPublicKey).toScVal(),
+      nativeToScVal(courseId, { type: 'string' }),
+      nativeToScVal(moduleId, { type: 'u32' }),
+      nativeToScVal(priorScore, { type: 'u32' }),
+    ],
+  })
+}
+
+/**
+ * Build a complete Soroban transaction ready for signing.
+ */
+export function buildSorobanTx(params: {
+  sourceAccount: Account
+  networkPassphrase: string
+  contractId: string
+  method: string
+  args: xdr.ScVal[]
+  baseFee?: string
+}): Transaction {
+  const op = buildInvokeContractOp({
+    contractId: params.contractId,
+    method: params.method,
+    args: params.args,
+  })
+
+  return new TransactionBuilder(params.sourceAccount, {
+    fee: params.baseFee ?? '100000',
+    networkPassphrase: params.networkPassphrase,
+  })
+    .addOperation(op)
+    .setTimeout(30)
+    .build()
+}
+
+export {
+  Networks,
+  Transaction,
+  Keypair,
+  StrKey,
+  xdr,
+  Address,
+  Contract,
+  nativeToScVal,
+  scValToNative,
+  Operation,
+  TransactionBuilder,
+  Account,
+}

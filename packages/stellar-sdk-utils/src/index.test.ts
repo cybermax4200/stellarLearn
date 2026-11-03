@@ -110,4 +110,51 @@ describe('stellar-sdk-utils', () => {
       expect(verifyWalletSignature('invalid-pk', challenge, sig.toString('base64'))).toBe(false)
     })
   })
+
+  describe('soroban contract invocation helpers', () => {
+    const mockContractId = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM'
+    const kp = Keypair.random()
+
+    it('builds a valid issue_credential contract operation', async () => {
+      const { buildIssueCredentialOp } = await import('./index')
+      const op = buildIssueCredentialOp(
+        mockContractId,
+        kp.publicKey(),
+        'stellar-fundamentals',
+        'QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco'
+      )
+      expect(op).toBeDefined()
+      expect(op.toXDR).toBeTypeOf('function')
+      const xdrBase64 = op.toXDR('base64')
+      expect(xdrBase64.length).toBeGreaterThan(0)
+    })
+
+    it('builds a valid disburse_reward contract operation', async () => {
+      const { buildDisburseRewardOp } = await import('./index')
+      const op = buildDisburseRewardOp(mockContractId, kp.publicKey(), 'CourseComplete')
+      expect(op).toBeDefined()
+      expect(op.toXDR('base64').length).toBeGreaterThan(0)
+    })
+
+    it('builds a valid unlock_module contract operation', async () => {
+      const { buildUnlockModuleOp } = await import('./index')
+      const op = buildUnlockModuleOp(mockContractId, kp.publicKey(), 'stellar-fundamentals', 2, 85)
+      expect(op).toBeDefined()
+      expect(op.toXDR('base64').length).toBeGreaterThan(0)
+    })
+
+    it('constructs a full signed Soroban transaction', async () => {
+      const { buildSorobanTx, Account, nativeToScVal } = await import('./index')
+      const account = new Account(kp.publicKey(), '100')
+      const tx = buildSorobanTx({
+        sourceAccount: account,
+        networkPassphrase: 'Test SDF Network ; September 2015',
+        contractId: mockContractId,
+        method: 'ping',
+        args: [nativeToScVal('pong', { type: 'string' })],
+      })
+      expect(tx.operations.length).toBe(1)
+      expect(tx.fee).toBe('100000')
+    })
+  })
 })
