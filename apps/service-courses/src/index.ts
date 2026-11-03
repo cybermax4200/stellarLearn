@@ -2,6 +2,7 @@ import express from 'express'
 import cors from 'cors'
 import jwt from 'jsonwebtoken'
 import { COURSES, enrolments, type Course, type Enrolment } from './data'
+import { courseRepo } from './db'
 
 const app = express()
 app.use(cors())
@@ -12,6 +13,7 @@ const PORT = process.env.PORT ?? 3002
 
 export function clearEnrolments(): void {
   enrolments.clear()
+  courseRepo.clearAllEnrolments()
 }
 
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -28,17 +30,19 @@ function requireAuth(req: express.Request, res: express.Response, next: express.
 
 // GET /courses — list all courses
 app.get('/courses', (_req, res) => {
-  res.json(COURSES.map(({ modules, ...c }) => ({ ...c, moduleCount: modules.length })))
+  const all = courseRepo.getAllCourses()
+  res.json(all.map(({ modules, ...c }) => ({ ...c, moduleCount: modules.length })))
 })
 
 // GET /enrolments/mine — list all enrolled courses with course metadata for the authenticated learner
 app.get('/enrolments/mine', requireAuth, (_req, res) => {
   const publicKey = res.locals.publicKey as string
+  const allCourses = courseRepo.getAllCourses()
   const userEnrolments: Array<Enrolment & { course: Course; completedModulesCount: number; isCompleted: boolean }> = []
 
-  for (const course of COURSES) {
+  for (const course of allCourses) {
     const key = `${publicKey}:${course.id}`
-    const enrolment = enrolments.get(key)
+    const enrolment = enrolments.get(key) || courseRepo.getEnrolment(publicKey, course.id)
     if (enrolment) {
       const completedCount = course.modules.filter((m) => enrolment.progress[m.id]?.completed).length
       userEnrolments.push({
@@ -55,19 +59,31 @@ app.get('/enrolments/mine', requireAuth, (_req, res) => {
 
 // GET /courses/:id — get a single course with modules
 app.get('/courses/:id', (req, res) => {
-  const course = COURSES.find((c) => c.id === req.params.id)
+  const course = courseRepo.getCourseById(req.params.id) || COURSES.find((c) => c.id === req.params.id)
   if (!course) return res.status(404).json({ error: 'Course not found' })
   return res.json(course)
+})
+
+// POST /courses — create or update a course
+app.post('/courses', (req, res) => {
+  const course = req.body as Course
+  if (!course?.id || !course?.title || !Array.isArray(course?.modules)) {
+    return res.status(400).json({ error: 'id, title, and modules array are required' })
+  }
+  const saved = courseRepo.saveCourse(course)
+  return res.status(201).json(saved)
 })
 
 // POST /courses/:id/enrol — enrol the authenticated learner
 app.post('/courses/:id/enrol', requireAuth, (req, res) => {
   const publicKey = res.locals.publicKey as string
-  const course = COURSES.find((c) => c.id === req.params.id)
+  const course = courseRepo.getCourseById(req.params.id) || COURSES.find((c) => c.id === req.params.id)
   if (!course) return res.status(404).json({ error: 'Course not found' })
 
   const key = `${publicKey}:${course.id}`
-  if (enrolments.has(key)) return res.status(409).json({ error: 'Already enrolled' })
+  if (enrolments.has(key) || courseRepo.getEnrolment(publicKey, course.id)) {
+    return res.status(409).json({ error: 'Already enrolled' })
+  }
 
   const enrolment: Enrolment = {
     learnerPublicKey: publicKey,
@@ -76,13 +92,14 @@ app.post('/courses/:id/enrol', requireAuth, (req, res) => {
     progress: {},
   }
   enrolments.set(key, enrolment)
+  courseRepo.saveEnrolment(enrolment)
   return res.status(201).json(enrolment)
 })
 
 // GET /courses/:id/progress — get learner progress
 app.get('/courses/:id/progress', requireAuth, (req, res) => {
   const publicKey = res.locals.publicKey as string
-  const enrolment = enrolments.get(`${publicKey}:${req.params.id}`)
+  const enrolment = enrolments.get(`${publicKey}:${req.params.id}`) || courseRepo.getEnrolment(publicKey, req.params.id)
   if (!enrolment) return res.status(404).json({ error: 'Not enrolled' })
   return res.json(enrolment)
 })
@@ -93,13 +110,14 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
   const { id: courseId, moduleId } = req.params
   const { score } = req.body as { score?: number }
 
-  const course = COURSES.find((c) => c.id === courseId)
+  const course = courseRepo.getCourseById(courseId) || COURSES.find((c) => c.id === courseId)
   if (!course) return res.status(404).json({ error: 'Course not found' })
 
   const moduleExists = course.modules.some((m) => m.id === moduleId)
   if (!moduleExists) return res.status(404).json({ error: 'Module not found in this course' })
 
-  const enrolment = enrolments.get(`${publicKey}:${courseId}`)
+  const key = `${publicKey}:${courseId}`
+  let enrolment = enrolments.get(key) || courseRepo.getEnrolment(publicKey, courseId)
   if (!enrolment) return res.status(404).json({ error: 'Not enrolled' })
 
   enrolment.progress[moduleId] = {
@@ -108,9 +126,11 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
     score,
     completedAt: new Date().toISOString(),
   }
+  enrolments.set(key, enrolment)
+  courseRepo.saveEnrolment(enrolment)
 
   // Check if all modules are complete
-  const allComplete = course.modules.every((m) => enrolment.progress[m.id]?.completed)
+  const allComplete = course.modules.every((m) => enrolment!.progress[m.id]?.completed)
 
   return res.json({ progress: enrolment.progress, courseComplete: allComplete })
 })
