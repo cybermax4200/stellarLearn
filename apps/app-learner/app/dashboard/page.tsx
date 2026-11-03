@@ -25,20 +25,22 @@ interface EnrolmentItem {
 }
 
 const COURSES_URL = process.env.NEXT_PUBLIC_COURSES_URL ?? 'http://localhost:3002'
+const ADAPTIVE_URL = process.env.NEXT_PUBLIC_ADAPTIVE_URL ?? 'http://localhost:8002'
 
 export default function DashboardPage() {
-  const { publicKey, disconnect } = useWallet()
+  const { publicKey, token, disconnect } = useWallet()
   const [enrolments, setEnrolments] = useState<EnrolmentItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [recommendation, setRecommendation] = useState<{ module_id?: string | null; message?: string } | null>(null)
 
   useEffect(() => {
-    if (!publicKey) return
+    if (!publicKey || !token) return
     setLoading(true)
 
-    // Attempt to load live enrolments
+    // Attempt to load live enrolments with authenticated user JWT
     fetch(`${COURSES_URL}/enrolments/mine`, {
       headers: {
-        Authorization: `Bearer dev-token`,
+        Authorization: `Bearer ${token}`,
       },
     })
       .then((r) => (r.ok ? r.json() : null))
@@ -51,7 +53,23 @@ export default function DashboardPage() {
         // Service offline or non-mocked; keep default state
       })
       .finally(() => setLoading(false))
-  }, [publicKey])
+
+    // Fetch AI adaptive learning path recommendation
+    fetch(`${ADAPTIVE_URL}/recommend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        learner_id: publicKey,
+        completed_modules: [],
+        performance_scores: {},
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((rec) => {
+        if (rec) setRecommendation(rec)
+      })
+      .catch(() => {})
+  }, [publicKey, token])
 
   if (!publicKey) {
     return (
@@ -93,6 +111,24 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
+
+      {recommendation?.module_id && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-6 mb-8 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="text-3xl">🧠</div>
+            <div>
+              <div className="text-xs uppercase font-bold tracking-wider text-indigo-700">AI Adaptive Path Recommendation</div>
+              <h3 className="text-lg font-bold text-gray-900 mt-0.5">Next Recommended Concept: <span className="text-indigo-600 capitalize">{recommendation.module_id.replace('-', ' ')}</span></h3>
+              <p className="text-sm text-gray-600 mt-1">
+                Based on your knowledge mastery model, advancing this module optimizes your retention.
+              </p>
+            </div>
+          </div>
+          <Link href="/courses">
+            <Button size="sm">Resume Learning</Button>
+          </Link>
+        </div>
+      )}
 
       <Card padding="lg">
         <div className="flex items-center justify-between mb-6">
