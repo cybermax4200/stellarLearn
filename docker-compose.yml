@@ -54,6 +54,19 @@ services:
       postgres:
         condition: service_healthy
 
+  ai-triggers:
+    build:
+      context: .
+      dockerfile: apps/ai-triggers/Dockerfile
+    ports:
+      - '3003:3003'
+    environment:
+      PORT: 3003
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      CREDENTIAL_CONTRACT_ID: ${CREDENTIAL_CONTRACT_ID}
+      REWARD_CONTRACT_ID: ${REWARD_CONTRACT_ID}
+      STELLAR_CONTRACT_TRIGGER_SECRET: ${STELLAR_CONTRACT_TRIGGER_SECRET}
+
   ai-adaptive:
     build:
       context: ./apps/ai-adaptive
