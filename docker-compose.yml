@@ -67,6 +67,16 @@ services:
       REWARD_CONTRACT_ID: ${REWARD_CONTRACT_ID}
       STELLAR_CONTRACT_TRIGGER_SECRET: ${STELLAR_CONTRACT_TRIGGER_SECRET}
 
+  storage:
+    build:
+      context: .
+      dockerfile: apps/storage/Dockerfile
+    ports:
+      - '3004:3004'
+    environment:
+      PORT: 3004
+      IPFS_API_KEY: ${IPFS_API_KEY}
+
   ai-adaptive:
     build:
       context: ./apps/ai-adaptive

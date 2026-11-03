@@ -1,0 +1,30 @@
+{
+  "cid": "bafkreia3bb2de721edc33294d2cb3d9be8ab92",
+  "content": {
+    "@context": [
+      "https://www.w3.org/2018/credentials/v1",
+      "https://purl.imsglobal.org/spec/ob/v3p0/context.json"
+    ],
+    "id": "urn:uuid:92e13a6e-118c-4214-983e-0e6058077802",
+    "type": [
+      "VerifiableCredential",
+      "OpenBadgeCredential",
+      "StellarLearnCredential"
+    ],
+    "issuer": {
+      "id": "https://stellarlearn.org/issuer",
+      "name": "StellarLearn Verifiable Authority",
+      "network": "Stellar Soroban"
+    },
+    "issuanceDate": "2026-11-03T07:18:19.147Z",
+    "credentialSubject": {
+      "id": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "courseId": "soroban-smart-contracts",
+      "courseTitle": "Soroban Smart Contracts",
+      "achievementName": "Soroban Smart Contracts Completion Certificate",
+      "grade": 98,
+      "instructor": "StellarLearn Team"
+    }
+  },
+  "pinnedAt": "2026-11-03T07:18:19.147Z"
+}
