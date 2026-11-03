@@ -1,0 +1,9 @@
+node_modules
+.next
+dist
+__pycache__
+*.pyc
+.pytest_cache
+.git
+.github
+contracts/target

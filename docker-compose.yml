@@ -29,8 +29,8 @@ services:
 
   service-auth:
     build:
-      context: ./apps/service-auth
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/service-auth/Dockerfile
     ports:
       - '3001:3001'
     environment:
@@ -42,8 +42,8 @@ services:
 
   service-courses:
     build:
-      context: ./apps/service-courses
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/service-courses/Dockerfile
     ports:
       - '3002:3002'
     environment:
@@ -76,8 +76,8 @@ services:
 
   app-learner:
     build:
-      context: ./apps/app-learner
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/app-learner/Dockerfile
     ports:
       - '3000:3000'
     environment:
