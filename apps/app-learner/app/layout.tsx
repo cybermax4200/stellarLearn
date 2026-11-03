@@ -30,6 +30,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <nav className="hidden md:flex items-center gap-6 text-sm text-gray-600">
                 <a href="/courses" className="hover:text-gray-900 transition-colors">Courses</a>
                 <a href="/dashboard" className="hover:text-gray-900 transition-colors">Dashboard</a>
+                <a href="/instructor" className="hover:text-gray-900 transition-colors">Instructor</a>
+                <a href="/verify" className="hover:text-gray-900 transition-colors">Verify Certificate</a>
               </nav>
               <WalletButton />
             </div>

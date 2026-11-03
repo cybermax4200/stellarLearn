@@ -77,6 +77,26 @@ services:
       PORT: 3004
       IPFS_API_KEY: ${IPFS_API_KEY}
 
+  api-gateway:
+    build:
+      context: .
+      dockerfile: apps/api-gateway/Dockerfile
+    ports:
+      - '4000:4000'
+    environment:
+      PORT: 4000
+      AUTH_SERVICE_URL: http://service-auth:3001
+      COURSES_SERVICE_URL: http://service-courses:3002
+      TRIGGERS_SERVICE_URL: http://ai-triggers:3003
+      STORAGE_SERVICE_URL: http://storage:3004
+      TUTOR_SERVICE_URL: http://ai-tutor:8001
+      ADAPTIVE_SERVICE_URL: http://ai-adaptive:8002
+    depends_on:
+      - service-auth
+      - service-courses
+      - ai-triggers
+      - storage
+
   ai-adaptive:
     build:
       context: ./apps/ai-adaptive
