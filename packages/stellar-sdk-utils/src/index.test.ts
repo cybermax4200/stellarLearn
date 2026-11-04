@@ -38,7 +38,7 @@ describe('stellar-sdk-utils', () => {
 
     it('validates soroban contract ids', () => {
       // Valid StrKey Contract ID with checksum
-      expect(isValidContractId('CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4')).toBe(true)
+      expect(isValidContractId('CB5FFEBHXWPSPPRRC34VJTNDMF5VPWI5F7QYSO7SNFRY4LHXQJNOL2GV')).toBe(true)
       expect(isValidContractId('GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')).toBe(false)
       expect(isValidContractId('not-a-contract')).toBe(false)
     })
@@ -112,7 +112,7 @@ describe('stellar-sdk-utils', () => {
   })
 
   describe('soroban contract invocation helpers', () => {
-    const mockContractId = 'CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM'
+    const mockContractId = 'CD2RFDAIJX3WPITPCKQ6ARAWIIWHSRFADBQERGMLBAMZTI3GEGQXEQCP'
     const kp = Keypair.random()
 
     it('builds a valid issue_credential contract operation', async () => {
