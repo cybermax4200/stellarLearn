@@ -365,6 +365,108 @@ export async function submitSorobanTx(params: {
 }
 
 // ==========================================
+// Read-only Soroban contract query (simulation only, no submission)
+// ==========================================
+
+export interface SorobanQueryResult<T = unknown> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+/**
+ * Query a Soroban contract function without submitting a transaction.
+ * This uses simulation only — no signing or submission required.
+ * Returns the deserialized return value of the contract function.
+ *
+ * Example: querySorobanContract({ network: 'testnet', contractId, method: 'get_credentials', args: [...] })
+ */
+export async function querySorobanContract<T = unknown>(params: {
+  network: StellarNetwork
+  contractId: string
+  method: string
+  args: xdr.ScVal[]
+  sourcePublicKey?: string
+}): Promise<SorobanQueryResult<T>> {
+  const { network, contractId, method, args, sourcePublicKey } = params
+
+  const networkPassphrase = NETWORK_PASSPHRASES[network]
+  const sorobanRpcUrl = SOROBAN_RPC_URLS[network]
+  const horizonUrl = HORIZON_URLS[network]
+
+  const sorobanServer = new rpc.Server(sorobanRpcUrl)
+  const horizonServer = new Horizon.Server(horizonUrl)
+
+  // Use a source account for the transaction (can be any account on the network)
+  const sourceKey = sourcePublicKey ?? 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+  let sourceAccount: Account
+  try {
+    sourceAccount = await horizonServer.loadAccount(sourceKey)
+  } catch {
+    // Fallback: create a minimal account object if loadAccount fails
+    sourceAccount = new Account(sourceKey, '0')
+  }
+
+  const op = buildInvokeContractOp({ contractId, method, args })
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: '100000',
+    networkPassphrase,
+  })
+    .addOperation(op)
+    .setTimeout(30)
+    .build()
+
+  const simulated = await sorobanServer.simulateTransaction(tx)
+
+  if (rpc.Api.isSimulationError(simulated)) {
+    return {
+      success: false,
+      error: typeof simulated.error === 'string' ? simulated.error : 'Simulation failed',
+    }
+  }
+
+  if (!rpc.Api.isSimulationSuccess(simulated)) {
+    return {
+      success: false,
+      error: 'Simulation returned unknown result',
+    }
+  }
+
+  // Extract the return value from the simulation result
+  const retval = simulated.result?.retval
+  if (!retval) {
+    return { success: true, data: undefined as T }
+  }
+
+  try {
+    const native = scValToNative(retval) as T
+    return { success: true, data: native }
+  } catch {
+    // If deserialization fails, return the raw XDR
+    return { success: true, data: retval.toXDR('base64') as unknown as T }
+  }
+}
+
+/**
+ * Build ScVal args for CredentialContract.get_credentials(learner)
+ */
+export function buildGetCredentialsArgs(learnerPublicKey: string): xdr.ScVal[] {
+  return [
+    new Address(learnerPublicKey).toScVal(),
+  ]
+}
+
+/**
+ * Build ScVal args for CredentialContract.get_credential(learner, course_id)
+ */
+export function buildGetCredentialArgs(learnerPublicKey: string, courseId: string): xdr.ScVal[] {
+  return [
+    new Address(learnerPublicKey).toScVal(),
+    nativeToScVal(courseId, { type: 'string' }),
+  ]
+}
+
+// ==========================================
 // Horizon payment verification
 // ==========================================
 
