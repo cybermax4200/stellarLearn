@@ -3,6 +3,12 @@ import uuid
 from typing import Optional
 import anthropic
 from services.rag import retrieve_relevant_knowledge
+from services.session_store import (
+    get_session,
+    set_session,
+    delete_session,
+    clear_all_sessions,
+)
 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -22,8 +28,14 @@ Your role:
 - Keep responses concise but complete
 """
 
-# In-memory session store (use Redis in production)
-sessions: dict[str, list[dict]] = {}
+# Re-export session helpers for backward compatibility with tests
+sessions = None  # replaced by session_store; kept for test compatibility
+
+
+def _get_sessions_dict() -> dict:
+    """Return the in-memory session dict for backward compatibility with tests."""
+    from services.session_store import _in_memory
+    return _in_memory
 
 
 class AITutor:
@@ -41,11 +53,13 @@ class AITutor:
         else:
             self.client = None
 
-        if self.session_id not in sessions:
-            sessions[self.session_id] = []
+        # Initialize session if it doesn't exist
+        existing = get_session(self.session_id)
+        if not existing:
+            set_session(self.session_id, [])
 
     def ask(self, question: str) -> str:
-        history = sessions[self.session_id]
+        history = get_session(self.session_id)
         history.append({"role": "user", "content": question})
 
         knowledge = retrieve_relevant_knowledge(question, self.course_context)
@@ -76,9 +90,9 @@ class AITutor:
             answer = response.content[0].text
 
         history.append({"role": "assistant", "content": answer})
-        sessions[self.session_id] = history[-20:]  # keep last 20 turns
+        set_session(self.session_id, history)
 
         return answer
 
     def clear(self):
-        sessions.pop(self.session_id, None)
+        delete_session(self.session_id)

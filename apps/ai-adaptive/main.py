@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from services.bkt import (
     ConceptState,
@@ -6,12 +6,13 @@ from services.bkt import (
     recommend_next,
     CONCEPT_GRAPH,
 )
+from services.state_store import get_learner_state, set_learner_state, clear_all_learner_states, _in_memory
+from dataclasses import asdict
 
 app = FastAPI(title="StellarLearn AI Adaptive Engine", version="0.1.0")
 
-# In-memory learner state (use Redis/PostgreSQL in production)
-learner_states: dict[str, dict[str, ConceptState]] = {}
-
+# Backward-compatible reference for tests (points to in-memory fallback dict)
+learner_states = _in_memory
 
 from typing import Optional
 
@@ -49,13 +50,13 @@ def recommend(req: RecommendRequest):
 @app.get("/mastery/{learner_id}")
 def get_mastery(learner_id: str):
     """Return all concept mastery scores for a learner."""
-    states = learner_states.get(learner_id, {})
+    states = get_learner_state(learner_id)
     return {
         "learner_id": learner_id,
         "mastery": {
             concept: {
-                "p_mastery": state.p_mastery,
-                "attempts": state.attempts,
+                "p_mastery": state["p_mastery"] if isinstance(state, dict) else state.p_mastery,
+                "attempts": state["attempts"] if isinstance(state, dict) else state.attempts,
             }
             for concept, state in states.items()
         },
@@ -66,13 +67,28 @@ def get_mastery(learner_id: str):
 @app.post("/mastery/update")
 def update(req: UpdateMasteryRequest):
     """Update mastery after a learner answers a question."""
-    if req.learner_id not in learner_states:
-        learner_states[req.learner_id] = {}
+    states = get_learner_state(req.learner_id)
 
-    states = learner_states[req.learner_id]
-    current = states.get(req.concept_id, ConceptState(concept_id=req.concept_id))
+    current_raw = states.get(req.concept_id)
+    if current_raw is None:
+        current = ConceptState(concept_id=req.concept_id)
+    elif isinstance(current_raw, ConceptState):
+        current = current_raw
+    else:
+        # Reconstruct from dict (loaded from Redis)
+        current = ConceptState(concept_id=req.concept_id, **current_raw)
+
     updated = update_mastery(current, req.correct)
-    states[req.concept_id] = updated
+
+    # Store as dict for JSON serialization (Redis), or as ConceptState for in-memory
+    if _in_memory is not states or not _in_memory:
+        # Redis mode: store as dict
+        states[req.concept_id] = asdict(updated)
+    else:
+        # In-memory mode: store ConceptState directly
+        states[req.concept_id] = updated
+
+    set_learner_state(req.learner_id, states)
 
     return {
         "concept_id": req.concept_id,

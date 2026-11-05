@@ -1,8 +1,12 @@
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from services.tutor import AITutor, sessions
+from services.tutor import AITutor
+from services.session_store import get_session, delete_session, clear_all_sessions, _in_memory
 import os
+
+# Backward-compatible sessions reference for tests (points to the in-memory fallback dict)
+sessions = _in_memory
 
 app = FastAPI(title="StellarLearn AI Tutor", version="0.1.0")
 
@@ -43,12 +47,12 @@ def ask(req: AskRequest):
 @app.delete("/session/{session_id}")
 def clear_session(session_id: str):
     """Clear conversation history for a session."""
-    sessions.pop(session_id, None)
+    delete_session(session_id)
     return {"message": "Session cleared", "session_id": session_id}
 
 
 @app.get("/session/{session_id}")
-def get_session(session_id: str):
+def get_session_history(session_id: str):
     """Get conversation history for a session."""
-    history = sessions.get(session_id, [])
+    history = get_session(session_id)
     return {"session_id": session_id, "messages": history, "count": len(history)}
