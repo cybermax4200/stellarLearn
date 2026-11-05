@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import crypto from 'crypto'
+import jwt from 'jsonwebtoken'
 import {
   Keypair,
   Address,
@@ -26,6 +27,21 @@ const REWARD_CONTRACT_ID =
 
 const STELLAR_NETWORK: StellarNetwork =
   (process.env.STELLAR_NETWORK as StellarNetwork) ?? 'testnet'
+
+// JWT and internal service token configuration
+const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
+const INTERNAL_SERVICE_TOKEN = process.env.INTERNAL_SERVICE_TOKEN ?? ''
+
+/**
+ * When AUTH_ENABLED is true, all /triggers/* endpoints require either:
+ * 1. A valid JWT (issued by service-auth), or
+ * 2. The internal service token (for service-to-service calls from service-courses)
+ *
+ * Disabled in tests and when INTERNAL_SERVICE_TOKEN is not set.
+ */
+const AUTH_ENABLED =
+  INTERNAL_SERVICE_TOKEN.length > 0 &&
+  process.env.NODE_ENV !== 'test'
 
 // Trigger Relayer Keypair (used to sign on-chain transactions)
 const triggerSecret = process.env.STELLAR_CONTRACT_TRIGGER_SECRET
@@ -67,6 +83,43 @@ const disbursedRewards: RewardRecord[] = []
 export function clearTriggerHistory(): void {
   issuedCredentials.length = 0
   disbursedRewards.length = 0
+}
+
+/**
+ * Auth middleware for /triggers/* endpoints.
+ *
+ * Accepts either:
+ * 1. Bearer JWT — validated with the same JWT_SECRET as service-auth
+ * 2. X-Internal-Token header — matches INTERNAL_SERVICE_TOKEN for
+ *    service-to-service calls (e.g. service-courses → ai-triggers)
+ *
+ * When AUTH_ENABLED is false (tests, dev), all requests pass through.
+ */
+function requireTriggerAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!AUTH_ENABLED) return next()
+
+  const authHeader = req.headers.authorization
+  const internalToken = req.headers['x-internal-token'] as string | undefined
+
+  // Check internal service token first (service-to-service)
+  if (internalToken && internalToken === INTERNAL_SERVICE_TOKEN) {
+    return next()
+  }
+
+  // Check JWT bearer token
+  if (authHeader?.startsWith('Bearer ')) {
+    try {
+      jwt.verify(authHeader.slice(7), JWT_SECRET)
+      return next()
+    } catch {
+      // Fall through to 401
+    }
+  }
+
+  return res.status(401).json({
+    error: 'Authentication required',
+    details: 'Provide a valid Bearer JWT or X-Internal-Token header',
+  })
 }
 
 /**
@@ -151,7 +204,7 @@ async function submitOrMock(
  * In simulated mode (tests/dev without trigger secret), returns deterministic
  * mock tx hashes.
  */
-app.post('/triggers/claim-credential', async (req, res) => {
+app.post('/triggers/claim-credential', requireTriggerAuth, async (req, res) => {
   const { learner, course_id, score } = req.body as {
     learner?: string
     course_id?: string
@@ -223,7 +276,7 @@ app.post('/triggers/claim-credential', async (req, res) => {
  * POST /triggers/claim-reward
  * Disburses milestone tokens directly.
  */
-app.post('/triggers/claim-reward', async (req, res) => {
+app.post('/triggers/claim-reward', requireTriggerAuth, async (req, res) => {
   const { learner, milestone } = req.body as {
     learner?: string
     milestone?: MilestoneType
@@ -272,7 +325,7 @@ app.post('/triggers/claim-reward', async (req, res) => {
  * GET /triggers/history/:learner
  * Get on-chain credential and reward history for a learner.
  */
-app.get('/triggers/history/:learner', (req, res) => {
+app.get('/triggers/history/:learner', requireTriggerAuth, (req, res) => {
   const learner = req.params.learner
   const credentials = issuedCredentials.filter((c) => c.learner === learner)
   const rewards = disbursedRewards.filter((r) => r.learner === learner)
@@ -292,6 +345,7 @@ app.get('/health', (_req, res) => {
     relayer_address: triggerKeypair.publicKey(),
     live_mode: LIVE_MODE,
     network: STELLAR_NETWORK,
+    auth_enabled: AUTH_ENABLED,
   })
 })
 
