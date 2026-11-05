@@ -11,6 +11,8 @@ import {
   Operation,
   TransactionBuilder,
   Account,
+  rpc,
+  Horizon,
 } from '@stellar/stellar-sdk'
 
 export type StellarNetwork = 'testnet' | 'mainnet' | 'local'
@@ -24,6 +26,12 @@ export const NETWORK_PASSPHRASES: Record<StellarNetwork, string> = {
 export const HORIZON_URLS: Record<StellarNetwork, string> = {
   testnet: 'https://horizon-testnet.stellar.org',
   mainnet: 'https://horizon.stellar.org',
+  local: 'http://localhost:8000',
+}
+
+export const SOROBAN_RPC_URLS: Record<StellarNetwork, string> = {
+  testnet: 'https://soroban-testnet.stellar.org:443',
+  mainnet: 'https://soroban-mainnet.stellar.org:443',
   local: 'http://localhost:8000',
 }
 
@@ -241,6 +249,178 @@ export function buildSorobanTx(params: {
     .build()
 }
 
+// ==========================================
+// Real Soroban Transaction Submission
+// ==========================================
+
+export interface SorobanSubmitResult {
+  success: boolean
+  txHash: string
+  status: string
+  error?: string
+  raw?: unknown
+}
+
+/**
+ * Submit a Soroban contract invocation transaction to the Stellar network.
+ *
+ * Steps:
+ * 1. Load the source account from Horizon
+ * 2. Build the transaction with the contract invocation operation
+ * 3. Simulate via Soroban RPC
+ * 4. Prepare (attach footprint + resource fees)
+ * 5. Sign with the provided keypair
+ * 6. Submit to Soroban RPC
+ * 7. Poll for confirmation
+ */
+export async function submitSorobanTx(params: {
+  network: StellarNetwork
+  contractId: string
+  method: string
+  args: xdr.ScVal[]
+  sourceKeypair: Keypair
+  baseFee?: string
+  timeoutSeconds?: number
+}): Promise<SorobanSubmitResult> {
+  const {
+    network,
+    contractId,
+    method,
+    args,
+    sourceKeypair,
+    baseFee = '100000',
+    timeoutSeconds = 30,
+  } = params
+
+  const networkPassphrase = NETWORK_PASSPHRASES[network]
+  const horizonUrl = HORIZON_URLS[network]
+  const sorobanRpcUrl = SOROBAN_RPC_URLS[network]
+
+  const sorobanServer = new rpc.Server(sorobanRpcUrl)
+  const horizonServer = new Horizon.Server(horizonUrl)
+
+  // 1. Load the source account
+  const sourceAccount = await horizonServer.loadAccount(sourceKeypair.publicKey())
+
+  // 2. Build the transaction with the contract invocation
+  const op = buildInvokeContractOp({ contractId, method, args })
+  const tx = new TransactionBuilder(sourceAccount, {
+    fee: baseFee,
+    networkPassphrase,
+  })
+    .addOperation(op)
+    .setTimeout(timeoutSeconds)
+    .build()
+
+  // 3. Simulate the transaction
+  const simulated = await sorobanServer.simulateTransaction(tx)
+
+  if (rpc.Api.isSimulationError(simulated)) {
+    return {
+      success: false,
+      txHash: '',
+      status: 'simulation_error',
+      error: simulated.error,
+      raw: simulated,
+    }
+  }
+
+  // 4. Prepare the transaction (simulate + attach footprint + resource fees)
+  const preparedTx = await sorobanServer.prepareTransaction(tx)
+
+  // 5. Sign the transaction
+  preparedTx.sign(sourceKeypair)
+
+  // 6. Submit the transaction
+  const sendResponse = await sorobanServer.sendTransaction(preparedTx)
+
+  if (sendResponse.status === 'ERROR') {
+    return {
+      success: false,
+      txHash: sendResponse.hash,
+      status: 'submit_error',
+      error: sendResponse.errorResult?.toString(),
+      raw: sendResponse,
+    }
+  }
+
+  // 7. Poll for transaction confirmation via getTransaction
+  const maxAttempts = 15
+  let pollStatus: rpc.Api.GetTransactionStatus = rpc.Api.GetTransactionStatus.NOT_FOUND
+  let pollRaw: rpc.Api.GetTransactionResponse | undefined
+
+  for (let i = 0; i < maxAttempts; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    pollRaw = await sorobanServer.getTransaction(sendResponse.hash)
+    pollStatus = pollRaw.status
+    if (pollStatus === rpc.Api.GetTransactionStatus.SUCCESS || pollStatus === rpc.Api.GetTransactionStatus.FAILED) break
+  }
+
+  return {
+    success: pollStatus === rpc.Api.GetTransactionStatus.SUCCESS,
+    txHash: sendResponse.hash,
+    status: pollStatus,
+    raw: pollRaw,
+  }
+}
+
+// ==========================================
+// Horizon payment verification
+// ==========================================
+
+/**
+ * Verify that a learner has sent a specific XLM payment to a recipient address.
+ * Searches recent transactions from the learner's account for a payment matching the amount.
+ */
+export async function verifyXlmPayment(params: {
+  network: StellarNetwork
+  senderPublicKey: string
+  recipientPublicKey: string
+  amountStroops: bigint
+  withinSeconds?: number
+}): Promise<{ verified: boolean; txHash?: string; error?: string }> {
+  const { network, senderPublicKey, recipientPublicKey, amountStroops, withinSeconds = 300 } = params
+  const horizonUrl = HORIZON_URLS[network]
+  const server = new Horizon.Server(horizonUrl)
+
+  // Convert stroops to decimal XLM string for comparison (Horizon returns decimal amounts)
+  const expectedXlm = stroopsToXlm(amountStroops)
+
+  try {
+    const payments = await server
+      .payments()
+      .forAccount(senderPublicKey)
+      .limit(20)
+      .order('desc')
+      .call()
+
+    const cutoff = Date.now() - withinSeconds * 1000
+
+    for (const payment of payments.records) {
+      // Skip if too old
+      if (new Date(payment.created_at).getTime() < cutoff) continue
+
+      if (
+        payment.type === 'payment' &&
+        payment.from === senderPublicKey &&
+        payment.to === recipientPublicKey &&
+        payment.asset_type === 'native' &&
+        // Compare with tolerance for decimal rounding
+        Math.abs(Number(payment.amount) - Number(expectedXlm)) < 0.0000001
+      ) {
+        return { verified: true, txHash: payment.transaction_hash }
+      }
+    }
+
+    return { verified: false, error: 'No matching payment found' }
+  } catch (err) {
+    return {
+      verified: false,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
 export {
   Networks,
   Transaction,
@@ -254,4 +434,6 @@ export {
   Operation,
   TransactionBuilder,
   Account,
+  rpc,
+  Horizon,
 }

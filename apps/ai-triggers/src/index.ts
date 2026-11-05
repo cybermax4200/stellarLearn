@@ -3,10 +3,14 @@ import cors from 'cors'
 import crypto from 'crypto'
 import {
   Keypair,
+  Address,
+  nativeToScVal,
+  xdr,
   isValidStellarPublicKey,
-  buildIssueCredentialOp,
-  buildDisburseRewardOp,
+  submitSorobanTx,
+  type StellarNetwork,
   type MilestoneType,
+  type SorobanSubmitResult,
 } from '@stellarlearn/stellar-sdk-utils'
 
 const app = express()
@@ -14,10 +18,14 @@ app.use(cors())
 app.use(express.json())
 
 const PORT = process.env.PORT ?? 3003
+
 const CREDENTIAL_CONTRACT_ID =
   process.env.CREDENTIAL_CONTRACT_ID ?? 'CD2RFDAIJX3WPITPCKQ6ARAWIIWHSRFADBQERGMLBAMZTI3GEGQXEQCP'
 const REWARD_CONTRACT_ID =
   process.env.REWARD_CONTRACT_ID ?? 'CB5FFEBHXWPSPPRRC34VJTNDMF5VPWI5F7QYSO7SNFRY4LHXQJNOL2GV'
+
+const STELLAR_NETWORK: StellarNetwork =
+  (process.env.STELLAR_NETWORK as StellarNetwork) ?? 'testnet'
 
 // Trigger Relayer Keypair (used to sign on-chain transactions)
 const triggerSecret = process.env.STELLAR_CONTRACT_TRIGGER_SECRET
@@ -25,12 +33,23 @@ export const triggerKeypair = triggerSecret
   ? Keypair.fromSecret(triggerSecret)
   : Keypair.fromRawEd25519Seed(crypto.createHash('sha256').update('stellarlearn-dev-trigger-key').digest())
 
+/**
+ * When true, the service submits real Soroban transactions to the Stellar network.
+ * Falls back to simulated mode when the trigger secret is a dev key or
+ * when NODE_ENV=test or STELLAR_LIVE=false.
+ */
+const LIVE_MODE =
+  !!triggerSecret &&
+  process.env.NODE_ENV !== 'test' &&
+  process.env.STELLAR_LIVE !== 'false'
+
 export interface CredentialRecord {
   learner: string
   course_id: string
   metadata_hash: string
   tx_hash: string
   issued_at: string
+  on_chain: boolean
 }
 
 export interface RewardRecord {
@@ -39,6 +58,7 @@ export interface RewardRecord {
   amount: string
   tx_hash: string
   timestamp: string
+  on_chain: boolean
 }
 
 const issuedCredentials: CredentialRecord[] = []
@@ -50,10 +70,88 @@ export function clearTriggerHistory(): void {
 }
 
 /**
+ * Generate a deterministic IPFS metadata CID hash for the certificate.
+ * In production, this is pinned to IPFS via the storage service and the real
+ * CID returned. Here we generate a content-addressed hash.
+ */
+function generateMetadataHash(learner: string, course_id: string, score: number): string {
+  const certPayload = JSON.stringify({
+    schema: 'StellarLearn-Credential-v1',
+    learner,
+    course_id,
+    grade: score,
+    issuer: triggerKeypair.publicKey(),
+    timestamp: new Date().toISOString(),
+  })
+  const sha256 = crypto.createHash('sha256').update(certPayload).digest('hex')
+  return `ipfs://bafkrei${sha256.slice(0, 32)}`
+}
+
+/**
+ * Build ScVal args for CredentialContract.issue_credential(learner, course_id, metadata_hash)
+ */
+function credentialArgs(learner: string, course_id: string, metadata_hash: string): xdr.ScVal[] {
+  return [
+    new Address(learner).toScVal(),
+    nativeToScVal(course_id, { type: 'string' }),
+    nativeToScVal(metadata_hash, { type: 'string' }),
+  ]
+}
+
+/**
+ * Build ScVal args for RewardContract.disburse_reward(learner, milestone)
+ */
+function rewardArgs(learner: string, milestone: MilestoneType): xdr.ScVal[] {
+  return [
+    new Address(learner).toScVal(),
+    xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(milestone)]),
+  ]
+}
+
+function mockTxHash(prefix: string): string {
+  return `0x${crypto.createHash('sha256').update(`${prefix}:${Date.now()}:${Math.random()}`).digest('hex')}`
+}
+
+/**
+ * Submit a Soroban transaction or fall back to a simulated hash.
+ */
+async function submitOrMock(
+  contractId: string,
+  method: string,
+  args: xdr.ScVal[],
+  mockPrefix: string
+): Promise<{ txHash: string; onChain: boolean; result?: SorobanSubmitResult }> {
+  if (LIVE_MODE) {
+    try {
+      const result = await submitSorobanTx({
+        network: STELLAR_NETWORK,
+        contractId,
+        method,
+        args,
+        sourceKeypair: triggerKeypair,
+      })
+      return {
+        txHash: result.txHash || mockTxHash(mockPrefix),
+        onChain: result.success,
+        result,
+      }
+    } catch (err) {
+      console.error(`On-chain ${method} failed:`, err)
+      return { txHash: mockTxHash(mockPrefix), onChain: false }
+    }
+  }
+  return { txHash: mockTxHash(mockPrefix), onChain: false }
+}
+
+/**
  * POST /triggers/claim-credential
  * Bridges completion event to Soroban CredentialContract and RewardContract.
+ *
+ * In LIVE_MODE, submits real Soroban transactions to the Stellar network.
+ * In simulated mode (tests/dev without trigger secret), returns deterministic
+ * mock tx hashes.
  */
-app.post('/triggers/claim-credential', (req, res) => {
+app.post('/triggers/claim-credential', async (req, res) => {
   const { learner, course_id, score } = req.body as {
     learner?: string
     course_id?: string
@@ -72,62 +170,52 @@ app.post('/triggers/claim-credential', (req, res) => {
     return res.status(400).json({ error: 'Learner score does not satisfy minimum 60% threshold' })
   }
 
-  // Generate deterministic IPFS metadata CID hash for the certificate
-  const certPayload = JSON.stringify({
-    schema: 'StellarLearn-Credential-v1',
-    learner,
-    course_id,
-    grade: score ?? 100,
-    issuer: triggerKeypair.publicKey(),
-    timestamp: new Date().toISOString(),
-  })
-  const sha256 = crypto.createHash('sha256').update(certPayload).digest('hex')
-  const metadata_hash = `ipfs://bafkrei${sha256.slice(0, 32)}`
+  const metadata_hash = generateMetadataHash(learner, course_id, score ?? 100)
 
-  // Build the Soroban smart contract operation
-  const credentialOp = buildIssueCredentialOp(
+  // 1. Submit CredentialContract.issue_credential transaction
+  const credResult = await submitOrMock(
     CREDENTIAL_CONTRACT_ID,
-    learner,
-    course_id,
-    metadata_hash
+    'issue_credential',
+    credentialArgs(learner, course_id, metadata_hash),
+    `cred:${learner}:${course_id}`
   )
 
-  // Generate deterministic tx hash representing the on-chain Soroban transaction
-  const txSeed = `${learner}:${course_id}:${metadata_hash}:${Date.now()}`
-  const tx_hash = `0x${crypto.createHash('sha256').update(txSeed).digest('hex')}`
+  // 2. Submit RewardContract.disburse_reward transaction
+  const rewResult = await submitOrMock(
+    REWARD_CONTRACT_ID,
+    'disburse_reward',
+    rewardArgs(learner, 'CourseComplete'),
+    `reward:${learner}:CourseComplete`
+  )
 
   const credentialRecord: CredentialRecord = {
     learner,
     course_id,
     metadata_hash,
-    tx_hash,
+    tx_hash: credResult.txHash,
     issued_at: new Date().toISOString(),
+    on_chain: credResult.onChain,
   }
   issuedCredentials.push(credentialRecord)
-
-  // Disburse CourseComplete reward tokens
-  const rewardOp = buildDisburseRewardOp(REWARD_CONTRACT_ID, learner, 'CourseComplete')
-  const rewardSeed = `reward:${learner}:CourseComplete:${Date.now()}`
-  const reward_tx_hash = `0x${crypto.createHash('sha256').update(rewardSeed).digest('hex')}`
 
   const rewardRecord: RewardRecord = {
     learner,
     milestone: 'CourseComplete',
     amount: '10 LEARN',
-    tx_hash: reward_tx_hash,
+    tx_hash: rewResult.txHash,
     timestamp: new Date().toISOString(),
+    on_chain: rewResult.onChain,
   }
   disbursedRewards.push(rewardRecord)
 
   return res.status(201).json({
     success: true,
-    message: 'Credential NFT minted and reward disbursed on Stellar',
+    message: credResult.onChain
+      ? 'Credential NFT minted and reward disbursed on Stellar'
+      : 'Credential and reward recorded (simulated mode — set STELLAR_CONTRACT_TRIGGER_SECRET for live transactions)',
     credential: credentialRecord,
     reward: rewardRecord,
-    contract_ops: {
-      credential_op: credentialOp.toXDR('base64').slice(0, 20) + '...',
-      reward_op: rewardOp.toXDR('base64').slice(0, 20) + '...',
-    },
+    live_mode: LIVE_MODE,
   })
 })
 
@@ -135,7 +223,7 @@ app.post('/triggers/claim-credential', (req, res) => {
  * POST /triggers/claim-reward
  * Disburses milestone tokens directly.
  */
-app.post('/triggers/claim-reward', (req, res) => {
+app.post('/triggers/claim-reward', async (req, res) => {
   const { learner, milestone } = req.body as {
     learner?: string
     milestone?: MilestoneType
@@ -156,20 +244,27 @@ app.post('/triggers/claim-reward', (req, res) => {
   }
   const amount = amountMap[milestone] || '1 LEARN'
 
-  const tx_hash = `0x${crypto.createHash('sha256').update(`${learner}:${milestone}:${Date.now()}`).digest('hex')}`
+  const result = await submitOrMock(
+    REWARD_CONTRACT_ID,
+    'disburse_reward',
+    rewardArgs(learner, milestone),
+    `reward:${learner}:${milestone}`
+  )
 
   const record: RewardRecord = {
     learner,
     milestone,
     amount,
-    tx_hash,
+    tx_hash: result.txHash,
     timestamp: new Date().toISOString(),
+    on_chain: result.onChain,
   }
   disbursedRewards.push(record)
 
   return res.status(201).json({
     success: true,
     reward: record,
+    live_mode: LIVE_MODE,
   })
 })
 
@@ -195,11 +290,15 @@ app.get('/health', (_req, res) => {
     status: 'ok',
     service: 'ai-triggers',
     relayer_address: triggerKeypair.publicKey(),
+    live_mode: LIVE_MODE,
+    network: STELLAR_NETWORK,
   })
 })
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => console.log(`ai-triggers listening on :${PORT}`))
+  app.listen(PORT, () =>
+    console.log(`ai-triggers listening on :${PORT} (live_mode=${LIVE_MODE}, network=${STELLAR_NETWORK})`)
+  )
 }
 
 export { app }
