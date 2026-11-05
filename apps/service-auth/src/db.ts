@@ -1,8 +1,5 @@
-import fs from 'fs'
-import path from 'path'
-
-const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), '.data')
-const DB_FILE = path.join(DATA_DIR, 'auth_db.json')
+import { isDatabaseAvailable, query, runMigrations, withTransaction, closePool } from '@stellarlearn/db-client'
+import type { PoolClient } from 'pg'
 
 export interface UserProfile {
   publicKey: string
@@ -16,80 +13,77 @@ interface AuthDatabaseSchema {
   users: Record<string, UserProfile>
 }
 
+/**
+ * AuthRepository — PostgreSQL-backed when DATABASE_URL is set,
+ * in-memory fallback for tests / local dev.
+ */
 class AuthRepository {
   private schema: AuthDatabaseSchema = {
     challenges: {},
     users: {},
   }
-  private isLoaded = false
 
-  private ensureDir() {
-    if (!fs.existsSync(DATA_DIR)) {
-      try {
-        fs.mkdirSync(DATA_DIR, { recursive: true })
-      } catch {
-        // In-memory fallback
-      }
-    }
+  async ensureSchema(): Promise<void> {
+    if (!isDatabaseAvailable()) return
+    await runMigrations()
   }
 
-  private load() {
-    if (this.isLoaded) return
-    this.ensureDir()
-    if (fs.existsSync(DB_FILE)) {
-      try {
-        const raw = fs.readFileSync(DB_FILE, 'utf-8')
-        const parsed = JSON.parse(raw) as AuthDatabaseSchema
-        if (parsed.challenges) this.schema.challenges = parsed.challenges
-        if (parsed.users) this.schema.users = parsed.users
-      } catch (err) {
-        console.warn('Could not load auth db:', err)
-      }
+  setChallenge(publicKey: string, challenge: string, expiresAt: number): void {
+    if (isDatabaseAvailable()) {
+      // Fire-and-forget async DB write; in-memory caller keeps the authoritative copy
+      query(
+        `INSERT INTO auth_challenges (public_key, challenge, expires_at)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (public_key) DO UPDATE SET challenge = $2, expires_at = $3`,
+        [publicKey, challenge, expiresAt]
+      ).catch(() => {})
     }
-    this.isLoaded = true
-  }
-
-  private persist() {
-    if (process.env.NODE_ENV === 'test') return
-    this.ensureDir()
-    try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(this.schema, null, 2), 'utf-8')
-    } catch {
-      // In-memory fallback
-    }
-  }
-
-  setChallenge(publicKey: string, challenge: string, expiresAt: number) {
-    this.load()
     this.schema.challenges[publicKey] = { challenge, expiresAt }
-    this.persist()
   }
 
-  getChallenge(publicKey: string) {
-    this.load()
+  getChallenge(publicKey: string): { challenge: string; expiresAt: number } | undefined {
     return this.schema.challenges[publicKey]
   }
 
-  deleteChallenge(publicKey: string) {
-    this.load()
-    delete this.schema.challenges[publicKey]
-    this.persist()
+  async getChallengeAsync(publicKey: string): Promise<{ challenge: string; expiresAt: number } | undefined> {
+    const inMem = this.schema.challenges[publicKey]
+    if (inMem) return inMem
+    if (!isDatabaseAvailable()) return undefined
+
+    const rows = await query<{ challenge: string; expires_at: string }>(
+      'SELECT challenge, expires_at FROM auth_challenges WHERE public_key = $1',
+      [publicKey]
+    )
+    if (rows.length === 0) return undefined
+    return { challenge: rows[0].challenge, expiresAt: Number(rows[0].expires_at) }
   }
 
-  clearChallenges() {
-    this.load()
+  deleteChallenge(publicKey: string): void {
+    if (isDatabaseAvailable()) {
+      query('DELETE FROM auth_challenges WHERE public_key = $1', [publicKey]).catch(() => {})
+    }
+    delete this.schema.challenges[publicKey]
+  }
+
+  clearChallenges(): void {
+    if (isDatabaseAvailable()) {
+      query('DELETE FROM auth_challenges', []).catch(() => {})
+    }
     this.schema.challenges = {}
-    this.persist()
   }
 
   recordLogin(publicKey: string): UserProfile {
-    this.load()
     const now = new Date().toISOString()
     const existing = this.schema.users[publicKey]
     if (existing) {
       existing.lastSeen = now
       existing.loginCount += 1
-      this.persist()
+      if (isDatabaseAvailable()) {
+        query(
+          'UPDATE users SET last_seen = $1, login_count = login_count + 1 WHERE public_key = $2',
+          [now, publicKey]
+        ).catch(() => {})
+      }
       return existing
     }
 
@@ -100,19 +94,24 @@ class AuthRepository {
       loginCount: 1,
     }
     this.schema.users[publicKey] = newUser
-    this.persist()
+    if (isDatabaseAvailable()) {
+      query(
+        `INSERT INTO users (public_key, first_seen, last_seen, login_count)
+         VALUES ($1, $2, $2, 1)`,
+        [publicKey, now]
+      ).catch(() => {})
+    }
     return newUser
   }
 
   getUser(publicKey: string): UserProfile | undefined {
-    this.load()
     return this.schema.users[publicKey]
   }
 
   getAllUsers(): UserProfile[] {
-    this.load()
     return Object.values(this.schema.users)
   }
 }
 
 export const authRepo = new AuthRepository()
+export { closePool }

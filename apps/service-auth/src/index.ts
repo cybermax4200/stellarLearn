@@ -3,6 +3,7 @@ import cors from 'cors'
 import jwt from 'jsonwebtoken'
 import { verifyWalletSignature, generateAuthChallenge, isValidStellarPublicKey } from '@stellarlearn/stellar-sdk-utils'
 import { authRepo } from './db'
+import { isDatabaseAvailable } from '@stellarlearn/db-client'
 
 const app = express()
 app.use(cors())
@@ -91,6 +92,12 @@ app.get('/auth/me', (req, res) => {
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'service-auth' }))
 
 if (process.env.NODE_ENV !== 'test') {
+  // Run database migrations on startup
+  if (isDatabaseAvailable()) {
+    authRepo.ensureSchema().catch((err) => {
+      console.warn('Database migration failed, using in-memory fallback:', err.message)
+    })
+  }
   app.listen(PORT, () => console.log(`service-auth listening on :${PORT}`))
 }
 

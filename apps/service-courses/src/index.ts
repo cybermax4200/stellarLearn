@@ -3,6 +3,7 @@ import cors from 'cors'
 import jwt from 'jsonwebtoken'
 import { COURSES, enrolments, type Course, type Enrolment } from './data'
 import { courseRepo } from './db'
+import { isDatabaseAvailable } from '@stellarlearn/db-client'
 
 const app = express()
 app.use(cors())
@@ -138,6 +139,12 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'service-courses' }))
 
 if (process.env.NODE_ENV !== 'test') {
+  // Run database migrations and seed data on startup
+  if (isDatabaseAvailable()) {
+    courseRepo.ensureSchema().catch((err) => {
+      console.warn('Database migration failed, using in-memory fallback:', err.message)
+    })
+  }
   app.listen(PORT, () => console.log(`service-courses listening on :${PORT}`))
 }
 

@@ -9,15 +9,18 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "express": "^4.19.2",
+    "@stellarlearn/db-client": "*",
     "cors": "^2.8.5",
-    "jsonwebtoken": "^9.0.2"
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.6",
-    "@types/cors": "^2.8.17",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.15.7",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
