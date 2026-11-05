@@ -11,10 +11,77 @@ app.use(express.json())
 
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
 const PORT = process.env.PORT ?? 3002
+const ADAPTIVE_URL = process.env.ADAPTIVE_URL ?? 'http://localhost:8002'
 
 export function clearEnrolments(): void {
   enrolments.clear()
   courseRepo.clearAllEnrolments()
+}
+
+// ============================================
+// Adaptive engine integration
+// ============================================
+
+interface AdaptiveRecommendation {
+  module_id: string | null
+  reason?: string
+  type?: string
+  message?: string
+}
+
+/**
+ * Call the ai-adaptive service to update mastery after module completion
+ * and get a recommendation for the next module.
+ *
+ * Falls back gracefully when the adaptive service is unavailable.
+ */
+async function updateAdaptiveEngine(params: {
+  learnerId: string
+  courseId: string
+  moduleId: string
+  score: number
+  completedModules: string[]
+  performanceScores: Record<string, number>
+}): Promise<AdaptiveRecommendation | null> {
+  const { learnerId, courseId, moduleId, score, completedModules, performanceScores } = params
+
+  // Determine if the learner "got it right" — score >= 60 means correct
+  const correct = score >= 60
+
+  try {
+    // 1. Update mastery for the completed concept
+    await fetch(`${ADAPTIVE_URL}/mastery/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        learner_id: learnerId,
+        concept_id: moduleId,
+        correct,
+      }),
+      signal: AbortSignal.timeout(3000),
+    })
+
+    // 2. Get recommendation for next module
+    const recResponse = await fetch(`${ADAPTIVE_URL}/recommend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        learner_id: learnerId,
+        completed_modules: completedModules,
+        performance_scores: performanceScores,
+        course_id: courseId,
+      }),
+      signal: AbortSignal.timeout(3000),
+    })
+
+    if (recResponse.ok) {
+      return (await recResponse.json()) as AdaptiveRecommendation
+    }
+  } catch (err) {
+    console.warn('Adaptive engine call failed (non-fatal):', err instanceof Error ? err.message : err)
+  }
+
+  return null
 }
 
 function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -106,7 +173,7 @@ app.get('/courses/:id/progress', requireAuth, (req, res) => {
 })
 
 // POST /courses/:id/modules/:moduleId/complete — mark a module complete
-app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
+app.post('/courses/:id/modules/:moduleId/complete', requireAuth, async (req, res) => {
   const publicKey = res.locals.publicKey as string
   const { id: courseId, moduleId } = req.params
   const { score } = req.body as { score?: number }
@@ -133,7 +200,32 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, (req, res) => {
   // Check if all modules are complete
   const allComplete = course.modules.every((m) => enrolment!.progress[m.id]?.completed)
 
-  return res.json({ progress: enrolment.progress, courseComplete: allComplete })
+  // Call adaptive engine to update mastery and get next recommendation
+  const completedModules = course.modules
+    .filter((m) => enrolment!.progress[m.id]?.completed)
+    .map((m) => m.id)
+  const performanceScores: Record<string, number> = {}
+  for (const m of course.modules) {
+    const p = enrolment.progress[m.id]
+    if (p?.completed && p.score !== undefined) {
+      performanceScores[m.id] = p.score / 100 // normalise to 0-1
+    }
+  }
+
+  const recommendation = await updateAdaptiveEngine({
+    learnerId: publicKey,
+    courseId,
+    moduleId,
+    score: score ?? 100,
+    completedModules,
+    performanceScores,
+  })
+
+  return res.json({
+    progress: enrolment.progress,
+    courseComplete: allComplete,
+    recommendation,
+  })
 })
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'service-courses' }))

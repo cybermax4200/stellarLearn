@@ -37,7 +37,7 @@ export default function DashboardPage() {
     if (!publicKey || !token) return
     setLoading(true)
 
-    // Attempt to load live enrolments with authenticated user JWT
+    // Load live enrolments with authenticated user JWT
     fetch(`${COURSES_URL}/enrolments/mine`, {
       headers: {
         Authorization: `Bearer ${token}`,
@@ -47,28 +47,43 @@ export default function DashboardPage() {
       .then((data) => {
         if (data?.enrolments) {
           setEnrolments(data.enrolments)
-        }
-      })
-      .catch(() => {
-        // Service offline or non-mocked; keep default state
-      })
-      .finally(() => setLoading(false))
 
-    // Fetch AI adaptive learning path recommendation
-    fetch(`${ADAPTIVE_URL}/recommend`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        learner_id: publicKey,
-        completed_modules: [],
-        performance_scores: {},
-      }),
-    })
-      .then((r) => (r.ok ? r.json() : null))
+          // Use real progress data to fetch adaptive recommendation
+          const allCompletedModules: string[] = []
+          const allPerformanceScores: Record<string, number> = {}
+
+          for (const enr of data.enrolments as EnrolmentItem[]) {
+            for (const [modId, modProgress] of Object.entries(enr.progress)) {
+              if (modProgress.completed) {
+                allCompletedModules.push(modId)
+                if (modProgress.score !== undefined) {
+                  allPerformanceScores[modId] = modProgress.score / 100
+                }
+              }
+            }
+          }
+
+          // Fetch AI adaptive learning path recommendation with real data
+          return fetch(`${ADAPTIVE_URL}/recommend`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              learner_id: publicKey,
+              completed_modules: allCompletedModules,
+              performance_scores: allPerformanceScores,
+            }),
+          })
+        }
+        return null
+      })
+      .then((recRes) => (recRes && recRes.ok ? recRes.json() : null))
       .then((rec) => {
         if (rec) setRecommendation(rec)
       })
-      .catch(() => {})
+      .catch(() => {
+        // Service offline; keep default state
+      })
+      .finally(() => setLoading(false))
   }, [publicKey, token])
 
   if (!publicKey) {

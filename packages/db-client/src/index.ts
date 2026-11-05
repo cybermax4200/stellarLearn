@@ -28,14 +28,14 @@ export function getPool(): Pool {
   return pool!
 }
 
-export async function query<T = Record<string, unknown>>(
+export async function query<T extends Record<string, unknown> = Record<string, unknown>>(
   text: string,
   params?: unknown[]
 ): Promise<T[]> {
   const p = getPool()
   if (!p) throw new Error('Database not available — DATABASE_URL not set')
-  const result = await p.query<T>(text, params as never[])
-  return result.rows
+  const result = await p.query<T extends infer R ? R : never>(text, params as never[])
+  return result.rows as T[]
 }
 
 export async function withTransaction<T>(
