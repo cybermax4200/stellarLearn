@@ -30,7 +30,7 @@ describe('service-auth API endpoints', () => {
   it('GET /health returns service status', async () => {
     const res = await fetch(`${baseUrl}/health`)
     expect(res.status).toBe(200)
-    const data = await res.json()
+    const data = await res.json() as Record<string, unknown>
     expect(data).toEqual({ status: 'ok', service: 'service-auth' })
   })
 
@@ -39,7 +39,7 @@ describe('service-auth API endpoints', () => {
       const kp = Keypair.random()
       const res = await fetch(`${baseUrl}/auth/challenge?publicKey=${kp.publicKey()}`)
       expect(res.status).toBe(200)
-      const data = await res.json()
+      const data = await res.json() as Record<string, unknown>
       expect(data.challenge).toBeDefined()
       expect(data.challenge).toContain(kp.publicKey())
     })
@@ -47,7 +47,7 @@ describe('service-auth API endpoints', () => {
     it('returns 400 for invalid public key', async () => {
       const res = await fetch(`${baseUrl}/auth/challenge?publicKey=not-a-stellar-key`)
       expect(res.status).toBe(400)
-      const data = await res.json()
+      const data = await res.json() as Record<string, unknown>
       expect(data.error).toBe('Invalid Stellar public key')
     })
   })
@@ -56,7 +56,7 @@ describe('service-auth API endpoints', () => {
     it('verifies signed challenge and issues JWT token', async () => {
       const kp = Keypair.random()
       const challengeRes = await fetch(`${baseUrl}/auth/challenge?publicKey=${kp.publicKey()}`)
-      const { challenge } = await challengeRes.json()
+      const { challenge } = (await challengeRes.json()) as { challenge: string }
 
       const sig = kp.sign(Buffer.from(challenge, 'utf8')).toString('base64')
 
@@ -67,7 +67,7 @@ describe('service-auth API endpoints', () => {
       })
 
       expect(verifyRes.status).toBe(200)
-      const data = await verifyRes.json()
+      const data = await verifyRes.json() as Record<string, unknown>
       expect(data.publicKey).toBe(kp.publicKey())
       expect(data.token).toBeDefined()
 
@@ -90,7 +90,7 @@ describe('service-auth API endpoints', () => {
         body: JSON.stringify({ publicKey: kp.publicKey(), signature: 'aW52YWxpZA==' }),
       })
       expect(verifyRes.status).toBe(401)
-      const data = await verifyRes.json()
+      const data = await verifyRes.json() as Record<string, unknown>
       expect(data.error).toBe('Invalid signature')
     })
 
@@ -109,7 +109,7 @@ describe('service-auth API endpoints', () => {
     it('returns decoded identity with valid bearer token', async () => {
       const kp = Keypair.random()
       const challengeRes = await fetch(`${baseUrl}/auth/challenge?publicKey=${kp.publicKey()}`)
-      const { challenge } = await challengeRes.json()
+      const { challenge } = (await challengeRes.json()) as { challenge: string }
       const sig = kp.sign(Buffer.from(challenge, 'utf8')).toString('base64')
 
       const verifyRes = await fetch(`${baseUrl}/auth/verify`, {
@@ -117,13 +117,13 @@ describe('service-auth API endpoints', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ publicKey: kp.publicKey(), signature: sig }),
       })
-      const { token } = await verifyRes.json()
+      const { token } = (await verifyRes.json()) as { token: string }
 
       const meRes = await fetch(`${baseUrl}/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(meRes.status).toBe(200)
-      const meData = await meRes.json()
+      const meData = await meRes.json() as Record<string, unknown>
       expect(meData.sub).toBe(kp.publicKey())
       expect(meData.iss).toBe('stellarlearn')
     })

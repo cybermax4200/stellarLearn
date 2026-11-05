@@ -39,14 +39,14 @@ describe('service-courses API', () => {
   it('GET /health returns health check payload', async () => {
     const res = await fetch(`${baseUrl}/health`)
     expect(res.status).toBe(200)
-    const json = await res.json()
+    const json = await res.json() as Record<string, unknown>
     expect(json).toEqual({ status: 'ok', service: 'service-courses' })
   })
 
   it('GET /courses returns course summaries with module counts', async () => {
     const res = await fetch(`${baseUrl}/courses`)
     expect(res.status).toBe(200)
-    const courses = await res.json()
+    const courses = await res.json() as Array<Record<string, unknown>>
     expect(Array.isArray(courses)).toBe(true)
     expect(courses.length).toBeGreaterThan(0)
     expect(courses[0].moduleCount).toBeDefined()
@@ -56,10 +56,10 @@ describe('service-courses API', () => {
   it('GET /courses/:id returns full course detail with modules', async () => {
     const res = await fetch(`${baseUrl}/courses/stellar-fundamentals`)
     expect(res.status).toBe(200)
-    const course = await res.json()
+    const course = await res.json() as Record<string, unknown>
     expect(course.id).toBe('stellar-fundamentals')
     expect(course.modules).toBeDefined()
-    expect(course.modules.length).toBe(3)
+    expect((course.modules as unknown[]).length).toBe(3)
   })
 
   it('GET /courses/:id returns 404 for unknown course', async () => {
@@ -81,7 +81,7 @@ describe('service-courses API', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(res.status).toBe(201)
-      const data = await res.json()
+      const data = await res.json() as Record<string, unknown>
       expect(data.courseId).toBe('stellar-fundamentals')
       expect(data.learnerPublicKey).toBe(testLearner)
     })
@@ -105,7 +105,7 @@ describe('service-courses API', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(initialRes.status).toBe(200)
-      const initialData = await initialRes.json()
+      const initialData = await initialRes.json() as Record<string, unknown>
       expect(initialData.count).toBe(0)
 
       // Enrol in stellar-fundamentals
@@ -118,10 +118,10 @@ describe('service-courses API', () => {
         headers: { Authorization: `Bearer ${token}` },
       })
       expect(afterRes.status).toBe(200)
-      const afterData = await afterRes.json()
+      const afterData = await afterRes.json() as { count: number; enrolments: Array<Record<string, unknown>> }
       expect(afterData.count).toBe(1)
       expect(afterData.enrolments[0].courseId).toBe('stellar-fundamentals')
-      expect(afterData.enrolments[0].course.title).toBe('Stellar Fundamentals')
+      expect((afterData.enrolments[0].course as Record<string, unknown>).title).toBe('Stellar Fundamentals')
       expect(afterData.enrolments[0].completedModulesCount).toBe(0)
       expect(afterData.enrolments[0].isCompleted).toBe(false)
     })
@@ -142,7 +142,7 @@ describe('service-courses API', () => {
         body: JSON.stringify({ score: 100 }),
       })
       expect(mod1Res.status).toBe(200)
-      const mod1Data = await mod1Res.json()
+      const mod1Data = await mod1Res.json() as { courseComplete: boolean; progress: Record<string, { completed: boolean }> }
       expect(mod1Data.courseComplete).toBe(false)
       expect(mod1Data.progress['intro-stellar'].completed).toBe(true)
 
@@ -166,14 +166,14 @@ describe('service-courses API', () => {
         body: JSON.stringify({ score: 95 }),
       })
       expect(mod3Res.status).toBe(200)
-      const mod3Data = await mod3Res.json()
+      const mod3Data = await mod3Res.json() as { courseComplete: boolean }
       expect(mod3Data.courseComplete).toBe(true)
 
       // Check /enrolments/mine reflects completion
       const mineRes = await fetch(`${baseUrl}/enrolments/mine`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      const mineData = await mineRes.json()
+      const mineData = await mineRes.json() as { enrolments: Array<Record<string, unknown>> }
       expect(mineData.enrolments[0].completedModulesCount).toBe(3)
       expect(mineData.enrolments[0].isCompleted).toBe(true)
     })
