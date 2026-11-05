@@ -1,6 +1,12 @@
 import express from 'express'
 import cors from 'cors'
 import jwt from 'jsonwebtoken'
+import {
+  xlmToStroops,
+  verifyXlmPayment,
+  isValidStellarPublicKey,
+  type StellarNetwork,
+} from '@stellarlearn/stellar-sdk-utils'
 import { COURSES, enrolments, type Course, type Enrolment } from './data'
 import { courseRepo } from './db'
 import { isDatabaseAvailable } from '@stellarlearn/db-client'
@@ -12,6 +18,21 @@ app.use(express.json())
 const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-in-production'
 const PORT = process.env.PORT ?? 3002
 const ADAPTIVE_URL = process.env.ADAPTIVE_URL ?? 'http://localhost:8002'
+
+// Stellar network config for payment verification
+const STELLAR_NETWORK: StellarNetwork =
+  (process.env.STELLAR_NETWORK as StellarNetwork) ?? 'testnet'
+
+// Platform fee recipient address (where course payments are sent)
+const FEE_RECIPIENT_PUBLIC_KEY =
+  process.env.FEE_RECIPIENT_PUBLIC_KEY ?? ''
+
+// When true, enrollment requires XLM payment verification.
+// Set STELLAR_LIVE=true and FEE_RECIPIENT_PUBLIC_KEY to enable.
+const PAYMENT_REQUIRED =
+  process.env.STELLAR_LIVE === 'true' &&
+  FEE_RECIPIENT_PUBLIC_KEY.length > 0 &&
+  process.env.NODE_ENV !== 'test'
 
 export function clearEnrolments(): void {
   enrolments.clear()
@@ -143,7 +164,8 @@ app.post('/courses', (req, res) => {
 })
 
 // POST /courses/:id/enrol — enrol the authenticated learner
-app.post('/courses/:id/enrol', requireAuth, (req, res) => {
+// When PAYMENT_REQUIRED and course price > 0, verifies XLM payment first
+app.post('/courses/:id/enrol', requireAuth, async (req, res) => {
   const publicKey = res.locals.publicKey as string
   const course = courseRepo.getCourseById(req.params.id) || COURSES.find((c) => c.id === req.params.id)
   if (!course) return res.status(404).json({ error: 'Course not found' })
@@ -151,6 +173,27 @@ app.post('/courses/:id/enrol', requireAuth, (req, res) => {
   const key = `${publicKey}:${course.id}`
   if (enrolments.has(key) || courseRepo.getEnrolment(publicKey, course.id)) {
     return res.status(409).json({ error: 'Already enrolled' })
+  }
+
+  // XLM payment verification for paid courses
+  if (PAYMENT_REQUIRED && course.price > 0) {
+    const expectedStroops = xlmToStroops(course.price.toString())
+    const paymentResult = await verifyXlmPayment({
+      network: STELLAR_NETWORK,
+      senderPublicKey: publicKey,
+      recipientPublicKey: FEE_RECIPIENT_PUBLIC_KEY,
+      amountStroops: expectedStroops,
+      withinSeconds: 600, // 10 minute window
+    })
+
+    if (!paymentResult.verified) {
+      return res.status(402).json({
+        error: 'Payment verification required',
+        details: paymentResult.error ?? 'No matching XLM payment found',
+        recipient: FEE_RECIPIENT_PUBLIC_KEY,
+        amount_xlm: course.price,
+      })
+    }
   }
 
   const enrolment: Enrolment = {
@@ -164,6 +207,36 @@ app.post('/courses/:id/enrol', requireAuth, (req, res) => {
   return res.status(201).json(enrolment)
 })
 
+// POST /courses/:id/verify-payment — verify XLM payment for a course
+// Learner calls this after sending payment, then enrols
+app.post('/courses/:id/verify-payment', requireAuth, async (req, res) => {
+  const publicKey = res.locals.publicKey as string
+  const course = courseRepo.getCourseById(req.params.id) || COURSES.find((c) => c.id === req.params.id)
+  if (!course) return res.status(404).json({ error: 'Course not found' })
+
+  if (!isValidStellarPublicKey(FEE_RECIPIENT_PUBLIC_KEY)) {
+    return res.status(503).json({ error: 'Payment verification not configured — FEE_RECIPIENT_PUBLIC_KEY not set' })
+  }
+
+  const expectedStroops = xlmToStroops(course.price.toString())
+  const paymentResult = await verifyXlmPayment({
+    network: STELLAR_NETWORK,
+    senderPublicKey: publicKey,
+    recipientPublicKey: FEE_RECIPIENT_PUBLIC_KEY,
+    amountStroops: expectedStroops,
+    withinSeconds: 600,
+  })
+
+  return res.json({
+    course_id: course.id,
+    price_xlm: course.price,
+    recipient: FEE_RECIPIENT_PUBLIC_KEY,
+    verified: paymentResult.verified,
+    tx_hash: paymentResult.txHash,
+    error: paymentResult.error,
+  })
+})
+
 // GET /courses/:id/progress — get learner progress
 app.get('/courses/:id/progress', requireAuth, (req, res) => {
   const publicKey = res.locals.publicKey as string
@@ -173,6 +246,8 @@ app.get('/courses/:id/progress', requireAuth, (req, res) => {
 })
 
 // POST /courses/:id/modules/:moduleId/complete — mark a module complete
+// Enforces prerequisite ordering: the prior module must be completed with
+// a passing score (>= 60) before the next module can be completed.
 app.post('/courses/:id/modules/:moduleId/complete', requireAuth, async (req, res) => {
   const publicKey = res.locals.publicKey as string
   const { id: courseId, moduleId } = req.params
@@ -181,12 +256,34 @@ app.post('/courses/:id/modules/:moduleId/complete', requireAuth, async (req, res
   const course = courseRepo.getCourseById(courseId) || COURSES.find((c) => c.id === courseId)
   if (!course) return res.status(404).json({ error: 'Course not found' })
 
-  const moduleExists = course.modules.some((m) => m.id === moduleId)
-  if (!moduleExists) return res.status(404).json({ error: 'Module not found in this course' })
+  const moduleIndex = course.modules.findIndex((m) => m.id === moduleId)
+  if (moduleIndex === -1) return res.status(404).json({ error: 'Module not found in this course' })
 
   const key = `${publicKey}:${courseId}`
   let enrolment = enrolments.get(key) || courseRepo.getEnrolment(publicKey, courseId)
   if (!enrolment) return res.status(404).json({ error: 'Not enrolled' })
+
+  // Prerequisite check: prior module must be completed with passing score
+  if (moduleIndex > 0) {
+    const priorModule = course.modules[moduleIndex - 1]
+    const priorProgress = enrolment.progress[priorModule.id]
+    if (!priorProgress?.completed) {
+      return res.status(403).json({
+        error: 'Prerequisite not met',
+        details: `Complete "${priorModule.title}" before accessing this module`,
+        required_module: priorModule.id,
+      })
+    }
+    if (priorProgress.score !== undefined && priorProgress.score < 60) {
+      return res.status(403).json({
+        error: 'Prerequisite score too low',
+        details: `Score on "${priorModule.title}" must be at least 60% to proceed`,
+        required_module: priorModule.id,
+        required_score: 60,
+        actual_score: priorProgress.score,
+      })
+    }
+  }
 
   enrolment.progress[moduleId] = {
     moduleId,
